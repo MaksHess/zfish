@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import polars as pl
 import numpy as np
 import h5py
 from typing import Sequence
@@ -211,3 +212,49 @@ def summary(filename):
             "\n",
         ]
     )
+
+
+def _meta_from_h5_file(
+    fn: str,
+    selector: dict[str, str],
+    attrs: Sequence[str],
+    rename: dict[str, str] | None = None,
+):
+    rename = dict() if rename is None else rename
+
+    agg = defaultdict(list)
+    with h5py.File(fn) as f:
+        for dset in select(f, selector):
+            agg["h5_path"].append(dset.name)
+            for attr in attrs:
+                agg[attr].append(dset.attrs.get(attr, None))
+
+    df = (
+        pl.DataFrame(agg)
+        .with_columns(
+            [
+                pl.lit(str(Path(fn))).alias("root_path"),
+                pl.lit(Path(fn).stem).alias("roi"),
+                pl.lit(Path(fn).stem.split("_")[0]).alias("well"),
+            ]
+        )
+        .with_column(
+            pl.concat_str([pl.col("roi"), pl.col("level")], sep="-").alias("roi_level")
+        )
+        .rename(rename)
+    )
+    return df
+
+
+image_meta_from_h5_file = partial(
+    _meta_from_h5_file,
+    selector={"img_type": "intensity"},
+    attrs=("img_type", "stain", "cycle", "level", "wavelength", "element_size_um"),
+)
+
+label_meta_from_h5_file = partial(
+    _meta_from_h5_file,
+    selector={"img_type": "label"},
+    attrs=("img_type", "stain", "level", "element_size_um"),
+    rename={"stain": "structure"},
+)

@@ -1,0 +1,66 @@
+Paper:
+  Computational:
+    Repository:
+      ☐ Set up clean github repository structure @high
+    
+    IO:
+      ☐ Transfer functions from `abbott.h5_files.py` to `zfish.io.h5.py` @critical
+      ☐ Add the file-index @critical
+      ☐ Mirror the api for zarr @low
+
+    Comression:
+      ☐ Use names consistent with @critical @index
+      ☐ Rename existing compressed files @critical
+
+    Registration:
+      ☐ ITK registration w/ parameter files @high
+      ☐ Registration tuning workflow @low
+
+    Segmentation:
+      ☐ Nuclei (Cellpose)
+      ☐ Cells
+      ☐ Embryo
+      ☐ Membranes and cytoplasm
+      ☐ mir-430 locus
+
+    Feature percistence (Object and Feature Indices):@index
+      ☐ Define the object index
+      ☐ Define the feature index
+      ☐ Define parquet schema in accordance with object & feature index
+
+    Feature extraction:
+      ☐ Refactor feature extraction code in accordance with indices @index
+      ☐ Ensure Classifier plug-in is compatible with @index
+
+    Intensity normalization:
+      ☐ Intensity normalization on features
+      ☐ Intensity normalization on images
+      ☐ Comparision between the two approaches
+
+    Higher order features:
+      ☐ Cell cycle
+      ☐ Neighborhood features
+
+    Analysis:
+      ☐ Sanity check plots to validate segmentation
+      ☐ Cell cycle phase on full dataset
+
+  Organization:
+    ☐ Set up to-do
+    ☐ Discuss timeline w/ Shayani @urgent
+    ☐ Plan committee meeting
+    ☐ Courses
+    ☐ Contact Luca regarding SpatialData @urgent
+
+  Figures:
+    Figure 1:
+      Multiplexed imaging at scale
+
+    Figure 2:
+      Segmentation, feature extraction, illumination correction
+
+    Figure 3:
+      CCP, analysis of cell cycle synchrony across time & neighborhoods, mitotic waves
+
+    Figure 4:
+      ZGA

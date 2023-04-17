@@ -1,11 +1,14 @@
 import os
+from collections import defaultdict
+from functools import partial
+from pathlib import Path
+from typing import Any, Literal, Sequence, TypeVar, overload
+
+import h5py
+import numpy as np
 import pandas as pd
 import polars as pl
-import numpy as np
-import h5py
-from typing import Sequence
 from numpy.typing import NDArray
-
 
 SIZE_TO_MB = {
     np.dtype("bool"): 1e-6 * 0.125,
@@ -21,10 +24,29 @@ SIZE_TO_MB = {
 }
 
 
-def datasets(f: h5py.File, return_names=False, dsets=None):
+@overload
+def datasets(
+    f: Any, return_names: Literal[False], dsets: list[Any] | None
+) -> list[h5py.Dataset]:
+    ...
+
+
+@overload
+def datasets(
+    f: Any, return_names: Literal[True], dsets: list[h5py.Dataset] | list[str] | None
+) -> list[str]:
+    ...
+
+
+def datasets(
+    f: h5py.File | h5py.Group,
+    return_names: bool = False,
+    dsets: list[h5py.Dataset] | list[str] | None = None,
+) -> list[h5py.Dataset] | list[str]:
     if dsets is None:
         dsets = []
 
+    group_or_dataset_name: str
     for group_or_dataset_name in f.keys():
         if isinstance(f[group_or_dataset_name], h5py.Group):
             datasets(f[group_or_dataset_name], return_names=return_names, dsets=dsets)
@@ -52,26 +74,28 @@ def groups(f: h5py.File, return_names=False, groups=None):
 
 
 def select(
-    f: h5py.File, attr_select: dict = None, not_attr_select: dict = None
+    f: h5py.File,
+    attrs_select: dict[str, str | int | tuple[str | int, ...]] | None = None,
+    not_attrs_select: dict[str, str | int | tuple[str | int, ...]] | None = None,
 ) -> list[h5py.Dataset]:
-    dsets = []
+    dsets: list[h5py.Dataset] = []
     for dset in datasets(f):
 
-        check = []
-        if attr_select:
-            for a in attr_select:
-                if isinstance(attr_select[a], (tuple, list)):
-                    check.append(dset.attrs.get(a) in attr_select[a])
+        check: list[bool] = []
+        if attrs_select:
+            for a in attrs_select:
+                if isinstance(attrs_select[a], (tuple, list)):
+                    check.append(dset.attrs.get(a) in attrs_select[a])
                 else:
-                    check.append(dset.attrs.get(a) == attr_select[a])
+                    check.append(dset.attrs.get(a) == attrs_select[a])
 
-        uncheck = []
-        if not_attr_select:
-            for b in not_attr_select:
-                if isinstance(not_attr_select[b], (tuple, list)):
-                    uncheck.append(dset.attrs.get(b) in not_attr_select[b])
+        uncheck: list[bool] = []
+        if not_attrs_select:
+            for b in not_attrs_select:
+                if isinstance(not_attrs_select[b], (tuple, list)):
+                    uncheck.append(dset.attrs.get(b) in not_attrs_select[b])
                 else:
-                    uncheck.append(dset.attrs.get(b) == not_attr_select[b])
+                    uncheck.append(dset.attrs.get(b) == not_attrs_select[b])
 
         if all(check) and not any(uncheck):
             dsets.append(dset)
@@ -86,7 +110,7 @@ def write_channel(
     attrs: dict = None,
     compression="gzip",
     overwrite=True,
-):
+) -> None:
     if overwrite:
         if name in f:
             del f[name]
@@ -98,10 +122,40 @@ def write_channel(
     return dset
 
 
-def h5_set(f: h5py.File, attr: str, remove_none=True):
-    unique = set([dset.attrs.get(attr) for dset in datasets(f)])
+T = TypeVar("T")
+
+
+def _squeeze_tuple(tpl: tuple[T]) -> tuple[T] | T:
+    if len(tpl) == 1:
+        return tpl[0]
+    return tpl
+
+
+def attrs_set(
+    f: h5py.File,
+    attrs: str | tuple[str, ...],
+    attrs_select: dict[str, str | int | tuple[str | int, ...]] | None = None,
+    not_attrs_select: dict[str, str | int | tuple[str | int, ...]] | None = None,
+    remove_none: bool = True,
+    return_dict: bool = False,
+    squeeze: bool = True,
+) -> list[h5py.Dataset]:
+    if isinstance(attrs, str | int):
+        attrs = (attrs,)
+    unique = set(
+        [
+            tuple(dset.attrs.get(attr) for attr in attrs)
+            for dset in select(
+                f, attrs_select=attrs_select, not_attrs_select=not_attrs_select
+            )
+        ]
+    )
     if None in unique:
         unique.remove(None)
+    if return_dict:
+        return [{attr: val for attr, val in zip(attrs, values)} for values in unique]
+    if squeeze:
+        return [_squeeze_tuple(e) for e in unique]
     return unique
 
 
@@ -219,7 +273,7 @@ def _meta_from_h5_file(
     selector: dict[str, str],
     attrs: Sequence[str],
     rename: dict[str, str] | None = None,
-):
+) -> pl.DataFrame:
     rename = dict() if rename is None else rename
 
     agg = defaultdict(list)

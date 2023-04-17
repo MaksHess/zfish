@@ -1,0 +1,67 @@
+# root: "/data/active/marvwy/20220721_ZE4i2_aligned"
+root: "M:\\marvwy\\20220721_ZE4i2_aligned"
+
+image_dir: "imgs"
+
+output_dir: "features"
+
+level: 1
+
+features:
+  label:
+    labels:
+    - "nucleiRaw3"
+    - "cells"
+    - "embryoRaw"
+
+  intensity:
+    labels:
+    - "nucleiRaw3"
+    # - "cyto"
+    channels:
+    - "DAPI-1"
+    - "Pol-II-S2P-0"
+
+  correlation:
+    labels:
+    - "nucleiRaw3" 
+    channel_pairs:
+    - - "DAPI-0"
+      - "DAPI-1"
+    - - "DAPI-1"
+      - "DAPI-2"
+    # - - "DAPI-1"
+    #   - "DAPI-3"
+
+  distance:
+    labels:
+    - "nucleiRaw3"
+    label_objects:
+    - - "embryoRaw"
+      - 1
+
+  density:
+    labels:
+    - "nucleiRaw3"
+    nhood:
+    - - "Touch" # Neighborhood type
+      - - 1     # Radii
+        - 2
+    - - "Radius"
+      - - 5
+        - 10
+        - 20
+        - 50
+        - 100
+    - - "KNN"
+      - - 1
+        - 5
+        - 10
+        - 20
+        - 50
+        - 100
+
+
+intensity_correction:
+  time_decay_models: "/data/active/marvwy/20220721_ZE4i2_aligned/models/time_decay"
+  z_decay_models: "/data/active/marvwy/20220721_ZE4i2_aligned/models/z_decay"

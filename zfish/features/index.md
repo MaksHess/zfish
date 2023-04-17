@@ -8,13 +8,16 @@ Specification for index conventions used across this repository.
     <figcaption>Fig. 1: Basic layout of the data.</figcaption>
 </figure>
 
-* ROI: `(roi, )`
+* Site: A physical region acquired by the microscope stored in an array on disk.
+    - `(site, )`
+* ROI: 
+    - `(site, [level], [bbx])`
 * Intensity Image: 
     - Full ID: `(roi, stain, acquisition)` 
-    - Short ID: `(img_id, )` 
+    - Short ID: `(roi, channel)` 
 * Label Image:
     - Full ID:  `(roi, structure)`
-    - Short ID:  `(lbl_id, )`
+    - Short ID:  `(roi, structure)`
 * Label Object:
     - Full ID: `(roi, structure, label)`
     - Short ID: `(obj_id, )`

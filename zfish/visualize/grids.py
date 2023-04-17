@@ -1,15 +1,16 @@
-from abbott.h5_files import h5_select
-from pathlib import Path
-import h5py
 import warnings
 from functools import partial
-from typing import Union, Any
-import numpy as np
-from tqdm import tqdm
-from numpy.typing import NDArray
 from itertools import product, repeat
-from typing import Callable
+from pathlib import Path
+from typing import Any, Callable, Union
+
+import h5py
+import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
+from tqdm import tqdm
+
+from zfish.io import h5
 
 ROW_TO_NUMBER = {k: v for k, v in zip("ABCDEFGH", range(8))}
 
@@ -39,7 +40,7 @@ def load_channels(
         with h5py.File(fn) as f:
             channels = []
             for ci, selector in enumerate(selectors):
-                dsets = h5_select(f, {**selector, "level": level})
+                dsets = h5.select(f, {**selector, "level": level})
                 if len(dsets) > 1:
                     warnings.warn(f"non-unique selector in {fn}")
                 dset = dsets[0]

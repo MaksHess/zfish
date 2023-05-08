@@ -32,6 +32,10 @@ HISTOGRAM_FEATURES = {
 
 INTENSITY_FEATURES = DISTRIBUTION_FEATURES | WEIGHTED_SHAPE_FEATURES
 
+def get_distribution_features(lbl_img: LabelImage, int_img: SpatialImage) -> pl.DataFrame:
+    return get_si_features_df(
+        lbl_img, int_img, props=DISTRIBUTION_FEATURES, named_features=True
+    )
 
 def get_intensity_features(lbl_img: LabelImage, int_img: SpatialImage) -> pl.DataFrame:
     return get_si_features_df(

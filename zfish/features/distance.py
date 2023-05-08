@@ -17,9 +17,9 @@ DISTANCE_ITK_FEATURES = {
 }
 
 
-def _distance_to_border(mask: BinaryImage) -> DistanceTransform:
+def _distance_to_border(mask: BinaryImage, lbl_dim: str = 'l') -> DistanceTransform:
     dt = itk.signed_maurer_distance_map_image_filter(mask, inside_is_positive=True)
-    dt.coords["c"] = mask.c.item()
+    dt.coords[lbl_dim] = mask[lbl_dim].item()
     return dt
 
 
@@ -36,9 +36,10 @@ DISTANCE_TRANSFORMS = {
 }
 
 
-def _get_mask(lbl_img: LabelImage, lbl: int) -> BinaryImage:
+def _get_mask(lbl_img: LabelImage, lbl: int, lbl_dim: str = 'l') -> BinaryImage:
     mask = (lbl_img == lbl).astype(lbl_img.dtype)
-    mask.coords["c"] = f"{lbl_img.c.item()}-{lbl}"
+    label_name = lbl_img[lbl_dim].item()
+    mask.coords[lbl_dim] = f"{label_name}-{lbl}"
     return mask
 
 
@@ -49,13 +50,18 @@ def get_distance_features(
     distance_functions: dict[
         str, Callable[[BinaryImage], DistanceTransform]
     ] = DISTANCE_TRANSFORMS,
+    lbl_dim: str = 'l',
     named_features: bool = True,
+    object_column: bool = False,
+    struct_index: bool = False,
 ):
-    if named_features:
+    if struct_index:
         index = "index"
+    elif object_column:
+        index = ["object", "label"]
     else:
-        index = "Label"
-    mask = _get_mask(lbl_img_to, lbl_to)
+        index = "label"
+    mask = _get_mask(lbl_img_to, lbl_to, lbl_dim=lbl_dim)
 
     dfs = []
     for name, distance_function in distance_functions.items():
@@ -67,7 +73,13 @@ def get_distance_features(
             continue
         # return lbl_img, dt
         df = get_si_features_df(
-            lbl_img, dt, props=DISTANCE_ITK_FEATURES, named_features=named_features
+            lbl_img,
+            dt,
+            props=DISTANCE_ITK_FEATURES,
+            lbl_dim=lbl_dim,
+            named_features=named_features,
+            object_column=object_column,
+            struct_index=struct_index,
         )
         df = _get_distance_at_centroid(df, dt)
         dfs.append(df.select([pl.col(index), pl.exclude(index).suffix(name)]))

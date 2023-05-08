@@ -1,85 +1,18 @@
 # %%
 import argparse
+from collections import defaultdict
+from dataclasses import dataclass
 
-# from pathlib import Path
-# from typing import Any
-# import yaml
-# from devtools import debug
+from spatial_roi import Roi
+
 from zfish.features.correlation import get_colocalization_features
 from zfish.features.distance import get_distance_features
-from zfish.features.feature_extraction_parameters import (
-    ROI,
-    FeatureExtractionParams,
-    load_roi,
-)
+from zfish.features.feature_extraction_parameters import FeatureExtractionParams
 from zfish.features.intensity import get_intensity_features
 from zfish.features.label import get_label_features
+from zfish.features.polars_utils import join
 
-from zfish.visualize.imshow import imshow
-    
 
-# %%
-
-params = FeatureExtractionParams.parse_file("feature_extraction.yaml")
-site_params = params.get_roi_by_index(1).validate_roi()
-lazy_roi = load_roi(site_params.roi_path, level=1)
-roi = ROI(
-    channel_images=lazy_roi.channel_images.sel(
-        c=list(site_params.features.resources.channels)
-    ),
-    label_images=lazy_roi.label_images.sel(
-        c=list(site_params.features.resources.labels)
-    ),
-).compute()
-
-features = {label: dict() for label in site_params.features.resources.labels}
-
-# %%
-for label in site_params.features.resources.labels:
-    print(f"starting feature extraction for {label}...")
-    if label in site_params.features.label.labels:
-        print("extracting label features...")
-        label_image = roi.label_images.sel(c=label)
-        features[label]["label"] = get_label_features(label_image)
-
-    if label in site_params.features.intensity.labels:
-        print("extracting intensity features...")
-        label_image = roi.label_images.sel(c=label)
-        features[label]["intensity"] = []
-        for channel in site_params.features.intensity.channels:
-            print(f"channel: {channel}")
-            channel_image = roi.channel_images.sel(c=channel)
-            features[label]["intensity"].append(
-                get_intensity_features(label_image, channel_image)
-            )
-
-    if label in site_params.features.correlation.labels:
-        print("extracting correlation features...")
-        label_image = roi.label_images.sel(c=label)
-        features[label]["correlation"] = []
-        for channel1, channel2 in site_params.features.correlation.channel_pairs:
-            print(f"channel pair: {(channel1, channel2)}")
-            channel_image1 = roi.channel_images.sel(c=channel1)
-            channel_image2 = roi.channel_images.sel(c=channel2)
-            features[label]["correlation"].append(
-                get_colocalization_features(label_image, channel_image1, channel_image2)
-            )
-
-    if label in site_params.features.distance.labels:
-        print("extracting distance features...")
-        label_image = roi.label_images.sel(c=label)
-        features[label]["distance"] = []
-        for label_to, label_id in site_params.features.distance.label_objects:
-            print(f"label object: {(label_to, label_id)}")
-            label_image_to = roi.label_images.sel(c=label_to)
-            features[label]["distance"].append(
-                get_distance_features(label_image, label_image_to, label_id)
-            )
-    print()
-
-# %%
-import spatialdata_plot
-from spatialdata.datasets import blobs
 # %%
 def main():
     parser = argparse.ArgumentParser()
@@ -90,9 +23,58 @@ def main():
     params = FeatureExtractionParams.parse_file(args.feature_extraction_parameters)
     site_params = params.get_roi_by_index(args.idx).validate_roi()
 
-    roi = load_roi(site_params.roi_path)
-    features = dict()
+    params = FeatureExtractionParams.parse_file("feature_extraction.yaml")
+    site_params = params.get_roi_by_index(1).validate_roi()
+    lazy_roi = Roi.from_file(
+        site_params.roi_path,
+        level=site_params.level,
+        features_root=site_params.output_path,
+        lazy_tables=True,
+    )
+    roi = lazy_roi.sel(
+        l=list(site_params.features.resources.label_images),
+        c=list(site_params.features.resources.channels),
+    ).compute()
 
+    features = defaultdict(list)
+
+    for label in site_params.features.resources.label_images:
+        label_image = roi.sel(l=label).labels
+        print(f"starting feature extraction for {label}...")
+        if label in site_params.features.label.labels:
+            print("extracting label features...")
+            features[label].append(get_label_features(label_image))
+
+        if label in site_params.features.intensity.labels:
+            print("extracting intensity features...")
+            for channel in site_params.features.intensity.channels:
+                print(f"channel: {channel}")
+                channel_image = roi.sel(c=channel).images
+                features[label].append(get_intensity_features(label_image, channel_image))
+
+        if label in site_params.features.correlation.labels:
+            print("extracting correlation features...")
+            for channel1, channel2 in site_params.features.correlation.channel_pairs:
+                print(f"channel pair: {(channel1, channel2)}")
+                channel_image1 = roi.sel(c=channel1).images
+                channel_image2 = roi.sel(c=channel2).images
+                features[label].append(
+                    get_colocalization_features(label_image, channel_image1, channel_image2)
+                )
+
+        if label in site_params.features.distance.labels:
+            print("extracting distance features...")
+            for label_to, label_id in site_params.features.distance.label_objects:
+                print(f"label object: {(label_to, label_id)}")
+                label_image_to = roi.sel(l=label_to).labels
+                features[label].append(
+                    get_distance_features(label_image, label_image_to, label_id)
+                )
+        print()
+
+    tables = {k: join(v, on="label") for k, v in features.items()}
+    roi.tables = tables
+    roi.write_tables()
 
 if __name__ == "__main__":
     main()

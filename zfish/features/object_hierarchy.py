@@ -7,11 +7,11 @@ from zfish.features.types import LabelImage, MultichannelLabelImage, SpatialImag
 
 HIERARCHY = {
     "emb": (),
-    "cell": ("emb",),
-    "nuc": ("cell", "emb"),
-    "mem": ("cell", "emb"),
-    "cyto": ("cell", "emb"),
-    "loc": ("nuc", "cell", "emb"),
+        "cell": ("emb",),
+            "nuc": ("cell", "emb"),
+            "mem": ("cell", "emb"),
+            "cyto": ("cell", "emb"),
+                "loc": ("nuc", "cell", "emb"),
 }
 
 
@@ -33,7 +33,8 @@ def get_full_object_hierarchy(
             df_parents.select(pl.all().cast(polars_dtype))
             .with_columns(
                 [
-                    pl.lit(0).cast(polars_dtype).alias(index_obj)
+                    # pl.lit(0).cast(polars_dtype).alias(index_obj)
+                    pl.lit(None).cast(polars_dtype).alias(index_obj)
                     for index_obj in full_index
                     if index_obj not in parents
                 ]
@@ -76,7 +77,7 @@ def get_parents(lbl: LabelImage, lbls: MultichannelLabelImage) -> pl.DataFrame:
         results[other_obj] = [prop.parent_label for prop in props]
 
     return results
-
+# %%
 
 if __name__ == "__main__":
 
@@ -84,7 +85,7 @@ if __name__ == "__main__":
     from zfish.io.datasource import hierarchical_labels
     from zfish.visualize.imshow import imshow
 
-    lbls = hierarchical_labels((100, 300, 300), scale=(1.2, 0.4, 0.5))
+    lbls = hierarchical_labels((100, 400, 400), scale=(1.2, 0.4, 0.5))
     lbls
 
     imshow(lbls)

@@ -1,3 +1,4 @@
+# %%
 from typing import TYPE_CHECKING, Callable, Sequence, TypeAlias
 
 import numpy as np
@@ -63,7 +64,10 @@ def get_colocalization_features(
     img1_si: SpatialImage,
     img2_si: SpatialImage,
     coloc_functions: dict[str, ColocalizationFn] = COLOC_FUNCTIONS,
+    lbl_dim: str = 'l',
     named_features: bool = True,
+    object_column: bool = False,
+    struct_index: bool = False,
 ) -> pl.DataFrame:
     lbls = lbls_si.to_numpy()
     img1 = img1_si.to_numpy()
@@ -71,7 +75,7 @@ def get_colocalization_features(
     props = regionprops_table(lbls, properties=("label", "slice"))
     labels = props["label"]
     slices = props["slice"]
-    df = pl.DataFrame({"Label": labels})
+    df = pl.DataFrame({"label": labels}).select(pl.col('label').cast(pl.Int64))
     for metric, func in coloc_functions.items():
         corrs = []
         for slc, label in zip(slices, labels):
@@ -83,13 +87,26 @@ def get_colocalization_features(
             corrs.append(func(img1_px, img2_px))
         df = df.with_columns(pl.Series(metric, corrs))
     if named_features:
-        df = df.with_columns([pl.lit(lbls_si.c.item()).alias("object")])
         df = df.select(
             [
-                pl.struct(["object", "Label"]).alias("index"),
-                pl.exclude(["object", "Label"]).prefix(
+                pl.col('label'),
+                pl.exclude('label').prefix(
                     f"{img1_si.c.item()}-{img2_si.c.item()}_"
                 ),
             ]
         )
+    if object_column:
+        df = df.with_columns([pl.lit(lbls_si[lbl_dim].item()).alias("object"),]).select(
+            [
+                pl.col(["object", "label"]),
+                pl.exclude(["object", "label"]),
+            ]
+        )
+        if struct_index:
+            df = df.select(
+                [
+                    pl.struct(("object", "label")).alias("index"),
+                    pl.exclude(("object", "label")),
+                ]
+            )
     return df

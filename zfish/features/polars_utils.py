@@ -1,6 +1,7 @@
 from typing import Sequence
 
 import polars as pl
+from polars.type_aliases import JoinStrategy
 from toolz.dicttoolz import valmap
 
 FULL_INDEX_COLUMNS = ["roi", "structure", "label", "channel", "stain", "acqusition"]
@@ -42,6 +43,25 @@ CORRELATION_BY_ACQUISITION_MAP = {
     "DAPI.1*DAPI.3_PearsonR": 3,
 }
 
+BOUNDING_BOX_STRUCT_COLUMN = 'BoundingBox'
+BOUNDING_BOX_COLUMNS = ['lower-x', 'upper-x', 'lower-y', 'upper-y', 'lower-z', 'upper-z']
+
+
+def _rename_structs(df: pl.DataFrame, col: str) -> pl.Expr:
+    return pl.col(col).struct.rename_fields([f"{col}-{k}" for k in df[col][0].keys()])
+
+
+def unnest_structs(df: pl.DataFrame, cols: str | Sequence[str]) -> pl.DataFrame:
+    if isinstance(cols, str):
+        cols = (cols,)
+    return df.select(
+        [pl.exclude(cols), *[_rename_structs(df, col) for col in cols]]
+    ).unnest(cols)
+
+
+def unnest_all_structs(df: pl.DataFrame) -> pl.DataFrame:
+    cols = [col for col, dtype in zip(df.columns, df.dtypes) if dtype == pl.Struct]
+    return unnest_structs(df, cols)
 
 def set_index_dtypes(df: pl.DataFrame) -> pl.DataFrame:
     cat_dtype_columns = [c for c in CAT_DTYPE_COLUMNS if c in df.columns]
@@ -115,13 +135,6 @@ def stack_channels(df_intensity: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def join(dfs: Sequence[pl.DataFrame]) -> pl.DataFrame:
-    df = dfs[0]
-    for df_other in dfs[1:]:
-        df = df.join(df_other, on=OBJECT_INDEX_NAMES, how="outer")
-    return df
-
-
 def unstack_channels(df_intensity_tall: pl.DataFrame) -> pl.DataFrame:
     channel_names = df_intensity_tall.select("channel").unique()["channel"].to_list()
     dfs = []
@@ -135,6 +148,15 @@ def unstack_channels(df_intensity_tall: pl.DataFrame) -> pl.DataFrame:
             )
         )
     return join(dfs)
+
+
+def join(dfs: Sequence[pl.DataFrame], on: str, how: JoinStrategy = 'outer') -> pl.DataFrame:
+    if len(dfs) == 0:
+        return pl.DataFrame()
+    df = dfs[0]
+    for df_other in dfs[1:]:
+        df = df.join(df_other, on=on, how=how)
+    return df
 
 
 def get_metadata(

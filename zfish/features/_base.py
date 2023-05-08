@@ -1,3 +1,4 @@
+# %%
 import re
 from typing import Sequence
 
@@ -12,35 +13,41 @@ def get_si_features_df(
     lbl_img: LabelImage,
     int_img: SpatialImage | None = None,
     *,
+    #TODO: Fix this once data stable
+    lbl_dim: str = 'l',
     props: set[str] | None = None,
     named_features: bool = True,
+    object_column: bool = False,
+    struct_index: bool = False,
 ) -> pl.DataFrame:
     lbl_img_itk = itk.image_from_xarray(lbl_img)
     if int_img is not None:
-        int_img_itk: SpatialImage = itk.image_from_xarray(int_img)
+        int_img_itk: SpatialImage | None = itk.image_from_xarray(int_img)
     else:
-        int_img_itk = int_img
+        int_img_itk: SpatialImage | None = int_img
     df = get_itk_features_df(lbl_img_itk, int_img_itk, props=props)
     if named_features:
-        df = df.with_columns([pl.lit(lbl_img.c.item()).alias("object"),]).select(
-            [
-                pl.col(["object", "Label"]),
-                pl.exclude(["object", "Label"]),
-            ]
-        )
         if int_img is not None:
             df = df.select(
                 [
-                    pl.col(["object", "Label"]),
-                    pl.exclude(["object", "Label"]).prefix(f"{int_img.c.item()}_"),
+                    pl.col("label"),
+                    pl.exclude("label").prefix(f"{int_img[lbl_dim].item()}_"),
                 ]
             )
-        df = df.select(
+    if object_column:
+        df = df.with_columns([pl.lit(lbl_img[lbl_dim].item()).alias("object"),]).select(
             [
-                pl.struct(("object", "Label")).alias("index"),
-                pl.exclude(("object", "Label")),
+                pl.col(["object", "label"]),
+                pl.exclude(["object", "label"]),
             ]
         )
+        if struct_index:
+            df = df.select(
+                [
+                    pl.struct(("object", "label")).alias("index"),
+                    pl.exclude(("object", "label")),
+                ]
+            )
     return df
 
 
@@ -105,7 +112,7 @@ def _get_df_from_feature_labelmap(
                 pl.Series(prop, data),
             ]
         )
-    return df.select([pl.col("Label"), pl.exclude("Label")])
+    return df.select([pl.col("Label").alias('label'), pl.exclude("Label")])
 
 
 def _is_not_itk_transform(prop: str) -> bool:
@@ -177,18 +184,3 @@ def _convert_itk_fixed_array(
     return columns
 
 
-def _rename_structs(df: pl.DataFrame, col: str) -> pl.Expr:
-    return pl.col(col).struct.rename_fields([f"{col}-{k}" for k in df[col][0].keys()])
-
-
-def unnest_structs(df: pl.DataFrame, cols: str | Sequence[str]) -> pl.DataFrame:
-    if isinstance(cols, str):
-        cols = (cols,)
-    return df.select(
-        [pl.exclude(cols), *[_rename_structs(df, col) for col in cols]]
-    ).unnest(cols)
-
-
-def unnest_all_structs(df: pl.DataFrame) -> pl.DataFrame:
-    cols = [col for col, dtype in zip(df.columns, df.dtypes) if dtype == pl.Struct]
-    return unnest_structs(df, cols)

@@ -102,7 +102,7 @@ def _load_multiscale(
     return MultiscaleSpatialImage.from_dict(out_dict)
 
 
-def load_roi(
+def _load_roi(
     root_path: str,
     attrs_select: dict[str, str | int | tuple[str | int, ...]] | None = None,
 ) -> SpatialImage:
@@ -110,25 +110,26 @@ def load_roi(
         attrs_select = {"img_type": "intensity", "level": 0}
     f = h5py.File(root_path)
     dsets = [to_si(dset) for dset in h5.select(f, attrs_select)]
-    return xr.concat(dsets, dim="c", combine_attrs="drop")
+    return dsets
+    # return xr.concat(dsets, dim="c", combine_attrs="drop")
 
 
 def load_channels(root_path: str, level: int | None = None) -> SpatialImage:
     f = h5py.File(root_path)
     attrs_select = {"img_type": "intensity"}
     if level is None:
-        level = sorted(h5.attr_set(f, "level", attr_select=attrs_select))[0]
+        level = sorted(h5.attrs_set(f, "level", attrs_select=attrs_select))[0]
     attrs_select = {**attrs_select, **{"level": level}}
-    return load_roi(root_path=root_path, attrs_select=attrs_select)
+    return _load_roi(root_path=root_path, attrs_select=attrs_select)
 
 
 def load_labels(root_path: str, level: int | None = None) -> LabelImage:
     f = h5py.File(root_path)
     attrs_select = {"img_type": "label"}
     if level is None:
-        level = sorted(h5.attr_set(f, "level", attr_select=attrs_select))[0]
+        level = sorted(h5.attrs_set(f, "level", attrs_select=attrs_select))[0]
     attrs_select = {**attrs_select, **{"level": level}}
-    return load_roi(root_path=root_path, attrs_select=attrs_select)
+    return _load_roi(root_path=root_path, attrs_select=attrs_select)
 
 
 def load_channel(root_path: str, h5_path: str) -> SpatialImage:
@@ -136,7 +137,6 @@ def load_channel(root_path: str, h5_path: str) -> SpatialImage:
     return to_si(f[h5_path])
 
 
-# %%
 def _get_intensity_channel_selectors(f: h5py.File) -> list[dict[str, str | int]]:
     channel_selectors = h5.attrs_set(
         f,
@@ -164,6 +164,7 @@ import xarray as xr
 ALL_DIMS = ("t", "c", "z", "y", "x")
 SPATIAL_DIMS = ("z", "y", "x")
 H5_DIMS = ("c", "z", "y", "x")
+H5_LABEL_DIMS = ("l", "z", "y", "x")
 
 from spatial_image import SpatialImage, to_spatial_image
 
@@ -188,21 +189,29 @@ def _(multiscale_dsets: Sequence[h5py.Dataset]) -> MultiscaleSpatialImage:
 def _(dset: h5py.Dataset) -> SpatialImage:
     data = da.expand_dims(da.array(dset), 0)
     scale = dset.attrs["element_size_um"]
+    kwargs = {'scale': dict(zip(SPATIAL_DIMS, scale))}
     if dset.attrs["img_type"] == "intensity":
         channel = f"{dset.attrs['stain']}-{dset.attrs['cycle']}"
         name = "image"
+        dims = H5_DIMS
+        kwargs = {**kwargs, 'dims': dims, 'c_coords': channel, 'name': name}
     elif dset.attrs["img_type"] == "label":
         channel = f"{dset.attrs['stain']}"
         name = "label"
+        # dims = H5_LABEL_DIMS
+        dims = H5_DIMS
+        # kwargs = {**kwargs, 'dims': dims, 'l_coords': channel, 'name': name}
+        kwargs = {**kwargs, 'dims': dims, 'c_coords': channel, 'name': name}
+
     else:
         channel = f"{dset.name}"
         name = "unknown"
     spi = to_spatial_image(
-        data,
-        dims=H5_DIMS,
-        scale=dict(zip(SPATIAL_DIMS, scale)),
-        c_coords=channel,
-        name=name,
+        data, **kwargs
+        # dims=dims,
+        # scale=dict(zip(SPATIAL_DIMS, scale)),
+        # c_coords=channel,
+        # name=name,
     )
     for k, v in dset.attrs.items():
         spi.attrs[k] = v

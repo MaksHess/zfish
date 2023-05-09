@@ -7,6 +7,16 @@ output_dir: "features"
 
 level: 1
 
+object_hierarchy:
+  cells:
+    -  "embryoRaw"
+  nucleiRaw3:
+    - "cells"
+    - "embryoRaw"
+  cyto:
+    - "cells"
+    - "embryoRaw"
+
 features:
   label:
     labels:
@@ -19,8 +29,8 @@ features:
     - "nucleiRaw3"
     # - "cyto"
     channels:
-    - "DAPI-1"
-    - "Pol-II-S2P-0"
+    - "*"
+    # - "Pol-II-S2P-0"
 
   correlation:
     labels:
@@ -30,15 +40,15 @@ features:
       - "DAPI-1"
     - - "DAPI-1"
       - "DAPI-2"
-    # - - "DAPI-1"
-    #   - "DAPI-3"
+    - - "DAPI-1"
+      - "DAPI-3"
 
   distance:
     labels:
     - "nucleiRaw3"
     label_objects:
-    - - "embryoRaw"
-      - 1
+    - - "embryoRaw" # labelimage
+      - 1 # label id
 
   density:
     labels:

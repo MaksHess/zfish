@@ -26,6 +26,8 @@ requirements = [
     "spatial_image",
     "multiscale_spatial_image",
     "imageio",
+    "zarr",
+    "scikit-learn",
 ]
 
 test_requirements = []

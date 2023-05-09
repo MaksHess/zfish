@@ -22,11 +22,11 @@ import h5py
 import numpy as np
 import polars as pl
 import xarray as xr
+
 from zfish.features.types import LabelImage, SpatialImage
 from zfish.image.image import to_si
 from zfish.io import h5
-
-from _roi_formatting import SORT_KEY, _coordinates_repr
+from zfish.roi._roi_formatting import SORT_KEY, _coordinates_repr
 
 if TYPE_CHECKING:
     import polars as pl

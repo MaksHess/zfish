@@ -3,10 +3,10 @@ from functools import partial
 from itertools import islice, pairwise, zip_longest
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
-from _spatial_roi_config import SortKey
+from zfish.roi._spatial_roi_config import SortKey
 
 if TYPE_CHECKING:
-    from spatial_roi import Roi
+    from zfish.roi.spatial_roi import Roi
 
 DIMS = ("roi", "l", "c", "z", "y", "x")
 CAT_DIMS = ("roi", "l", "c")

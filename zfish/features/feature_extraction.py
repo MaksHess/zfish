@@ -3,14 +3,13 @@ import argparse
 from collections import defaultdict
 from dataclasses import dataclass
 
-from spatial_roi import Roi
-
 from zfish.features.correlation import get_colocalization_features
 from zfish.features.distance import get_distance_features
 from zfish.features.feature_extraction_parameters import FeatureExtractionParams
 from zfish.features.intensity import get_intensity_features
 from zfish.features.label import get_label_features
 from zfish.features.polars_utils import join
+from zfish.roi.spatial_roi import Roi
 
 
 # %%
@@ -23,8 +22,6 @@ def main():
     params = FeatureExtractionParams.parse_file(args.feature_extraction_parameters)
     site_params = params.get_roi_by_index(args.idx).validate_roi()
 
-    params = FeatureExtractionParams.parse_file("feature_extraction.yaml")
-    site_params = params.get_roi_by_index(1).validate_roi()
     lazy_roi = Roi.from_file(
         site_params.roi_path,
         level=site_params.level,

@@ -2,18 +2,15 @@
 from dataclasses import dataclass, field
 from itertools import chain, combinations, repeat
 from pathlib import Path
-from pprint import pformat
-from typing import Any, NamedTuple, Protocol, TypeAlias
+from typing import Any, Protocol, TypeAlias
 
 from pydantic import BaseModel, validator
-from pydantic.dataclasses import dataclass as pdataclass
 from pydantic_yaml import YamlModel
-from spatial_roi import Roi
 from typing_extensions import Self
 
 from zfish.features.feature_types import Resources
-from zfish.features.types import LabelImage, SpatialImage, Table
-from zfish.image.image import load_channels, load_labels
+from zfish.features.types import LabelImage, SpatialImage
+from zfish.roi.spatial_roi import Roi
 
 
 def _get_channels_safe(img: LabelImage | SpatialImage) -> set[str]:
@@ -38,7 +35,7 @@ class ResourcesBase:
     channel_pairs: set[ChannelPair] = field(default_factory=set)
     label_images: set[LabelImage] = field(default_factory=set)
     label_objects: set[LabelObject] = field(default_factory=set)
-    tables: set[Table] = field(default_factory=set)
+    tables: set[str] = field(default_factory=set)
     features: set[Feature] = field(default_factory=set)
 
 

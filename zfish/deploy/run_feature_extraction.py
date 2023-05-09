@@ -20,13 +20,12 @@ exec python feature_extraction.py $SLURM_ARRAY_TASK_ID {1} -p {2}
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('fld', type=str)
     parser.add_argument('-p', '--feature_extraction_params', type=str)
     args = parser.parse_args()
 
     n = len(list(Path(args.fld).glob('*.h5')))
 
-    command = SLURM_COMMAND.format(n - 1, args.fld, args.feature_extraction_params)
+    command = SLURM_COMMAND.format(n - 1, args.feature_extraction_params)
     print(command)
     with open("temp.sh", "w") as f:
         f.write(command)

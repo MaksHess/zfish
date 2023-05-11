@@ -191,7 +191,7 @@ def _(dset: h5py.Dataset) -> SpatialImage:
     scale = dset.attrs["element_size_um"]
     kwargs = {'scale': dict(zip(SPATIAL_DIMS, scale))}
     if dset.attrs["img_type"] == "intensity":
-        channel = f"{dset.attrs['stain']}-{dset.attrs['cycle']}"
+        channel = f"{dset.attrs['stain']}.{dset.attrs['cycle']}"
         name = "image"
         dims = H5_DIMS
         kwargs = {**kwargs, 'dims': dims, 'c_coords': channel, 'name': name}

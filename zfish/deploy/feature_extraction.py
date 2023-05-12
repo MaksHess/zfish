@@ -31,12 +31,12 @@ def main():
     roi = lazy_roi.sel(
         l=list(site_params.features.resources.label_images),
         c=list(site_params.features.resources.channels),
-    ).compute()
+    )
 
     features = defaultdict(list)
 
     for label in site_params.features.resources.label_images:
-        label_image = roi.sel(l=label).labels
+        label_image = roi.sel(l=label).labels.compute()
         print(f"starting feature extraction for {label}...")
         if label in site_params.features.label.labels:
             print("extracting label features...")
@@ -46,15 +46,15 @@ def main():
             print("extracting intensity features...")
             for channel in site_params.features.intensity.channels:
                 print(f"channel: {channel}")
-                channel_image = roi.sel(c=channel).images
+                channel_image = roi.sel(c=channel).images.compute()
                 features[label].append(get_intensity_features(label_image, channel_image))
 
         if label in site_params.features.correlation.labels:
             print("extracting correlation features...")
             for channel1, channel2 in site_params.features.correlation.channel_pairs:
                 print(f"channel pair: {(channel1, channel2)}")
-                channel_image1 = roi.sel(c=channel1).images
-                channel_image2 = roi.sel(c=channel2).images
+                channel_image1 = roi.sel(c=channel1).images.compute()
+                channel_image2 = roi.sel(c=channel2).images.compute()
                 features[label].append(
                     get_colocalization_features(label_image, channel_image1, channel_image2)
                 )
@@ -63,7 +63,7 @@ def main():
             print("extracting distance features...")
             for label_to, label_id in site_params.features.distance.label_objects:
                 print(f"label object: {(label_to, label_id)}")
-                label_image_to = roi.sel(l=label_to).labels
+                label_image_to = roi.sel(l=label_to).labels.compute()
                 features[label].append(
                     get_distance_features(label_image, label_image_to, label_id)
                 )

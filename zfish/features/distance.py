@@ -5,7 +5,12 @@ import itk
 import polars as pl
 
 from zfish.features._base import get_si_features_df
-from zfish.features.types import BinaryImage, DistanceTransform, LabelImage
+from zfish.features.types import (
+    BinaryImage,
+    DistanceTransform,
+    LabelImage,
+    SpatialImage,
+)
 
 DISTANCE_ITK_FEATURES = {
     "Centroid",  # CentroidDistance
@@ -17,15 +22,16 @@ DISTANCE_ITK_FEATURES = {
 }
 
 
-def _distance_to_border(mask: BinaryImage, lbl_dim: str = 'l') -> DistanceTransform:
+def _distance_to_border(mask: BinaryImage) -> DistanceTransform:
+    lbl_dim = 'l'
     dt = itk.signed_maurer_distance_map_image_filter(mask, inside_is_positive=True)
-    dt.coords[lbl_dim] = mask[lbl_dim].item()
+    dt.coords['c'] = mask[lbl_dim].item()
     return dt
 
 
 def _distance_along_axis(mask: BinaryImage, axis: str = "z") -> DistanceTransform:
-    sum_along_axis = mask.cumsum(axis) * mask.meta.scale_dict[axis]
-    return sum_along_axis
+    sum_along_axis: SpatialImage = mask.cumsum(axis) * mask.meta.scale_dict[axis]
+    return sum_along_axis.rename({'l': 'c'})
 
 
 DISTANCE_TRANSFORMS = {

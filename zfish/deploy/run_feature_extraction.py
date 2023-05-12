@@ -2,19 +2,21 @@ import argparse
 import os
 from pathlib import Path
 
+from zfish.features.feature_extraction_parameters import FeatureExtractionParams
+
 SLURM_COMMAND = """#!/usr/bin/env bash
 
 #SBATCH --array=0-{0}%50
-#SBATCH --mem-per-cpu=20000m
-#SBATCH --cpus-per-task=5
+#SBATCH --mem-per-cpu=10000m
+#SBATCH --cpus-per-task=2
 #SBATCH -e errors.txt
 #SBATCH -o out.txt
 #SBATCH --time=3-00:00:00
 
 source ~/.bashrc
-conda activate elastix
+conda activate zfish
 
-exec python feature_extraction.py $SLURM_ARRAY_TASK_ID {1} -p {2}
+exec python feature_extraction.py $SLURM_ARRAY_TASK_ID -p {1}
 """
 
 
@@ -23,7 +25,14 @@ def main():
     parser.add_argument('-p', '--feature_extraction_params', type=str)
     args = parser.parse_args()
 
-    n = len(list(Path(args.fld).glob('*.h5')))
+    params = FeatureExtractionParams.parse_file(args.feature_extraction_params)
+    if params.image_dir:
+        fld = params.root / params.image_dir
+    else:
+        fld = params.root
+    print(fld)
+    n = len(list(Path(fld).glob('*.h5')))
+    n = 3
 
     command = SLURM_COMMAND.format(n - 1, args.feature_extraction_params)
     print(command)

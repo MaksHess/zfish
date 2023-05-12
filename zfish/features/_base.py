@@ -31,7 +31,7 @@ def get_si_features_df(
             df = df.select(
                 [
                     pl.col("label"),
-                    pl.exclude("label").prefix(f"{int_img[lbl_dim].item()}_"),
+                    pl.exclude("label").prefix(f"{int_img.c.item()}_"),
                 ]
             )
     if object_column:

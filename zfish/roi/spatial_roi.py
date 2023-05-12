@@ -15,6 +15,7 @@ from typing import (
     Iterator,
     Literal,
     Mapping,
+    Sequence,
     TypeAlias,
 )
 
@@ -35,6 +36,10 @@ if TYPE_CHECKING:
 
 Image: TypeAlias = LabelImage | SpatialImage
 Element: TypeAlias = Image | pl.DataFrame
+
+EXPERIMENT_INDEX = ('roi', 'object', 'label')
+ROI_INDEX = ('object', 'label')
+OBJECT_INDEX = ('label', )
 
 def _load_roi(
     root_path: PathLike,
@@ -66,7 +71,7 @@ def load_labels(root_path: PathLike, level: int | None = None) -> LabelImage:
     return xr.concat(_load_roi(root_path=root_path, attrs_select=attrs_select), dim="c")
 
 
-def load_tables(root_path: PathLike, lazy: bool = False) -> dict[str, "pl.DataFrame"]:
+def load_roi_tables(root_path: PathLike, lazy: bool = False) -> dict[str, "pl.DataFrame"]:
     import polars as pl
     tables = {}
     for fn in Path(root_path).glob('*.parquet'):
@@ -155,7 +160,6 @@ class TableWriteStrategy(Enum):
     MERGE = auto()
     RAISE = auto()
 
-# %%
 def _get_channels_safe(img: LabelImage | SpatialImage) -> set[str]:
     """
     Custom function to extract channel info from `SpatialImage`. Using the obvious
@@ -180,21 +184,19 @@ class Roi(abc.Mapping):
     _TABLES_IDX: tuple[str, ...] | str = 'label'
 
     @classmethod
-    def from_file(cls, root: PathLike, level: int, features_root: PathLike | None = None, lazy_tables: bool = False) -> "Roi":
+    def from_file(cls, root: PathLike[str], level: int, features_root: PathLike | None = None, lazy_tables: bool = False) -> "Roi":
         root = Path(root)
         name = root.stem
         if features_root is None:
-            features_root = root.parent / 'features' / name
+            features_root = root.parent.parent / 'features' / name
         paths = {'root': root, cls._FEATURES_KEY: features_root}
-        tables = load_tables(features_root, lazy=lazy_tables)
+        tables = load_roi_tables(features_root, lazy=lazy_tables)
 
         print(f"loading {name}...")
         return Roi(
             data={
-                cls._LABELS_KEY: xr.concat(
-                    load_labels(root, level=level), dim="c"
-                ).rename({"c": "l"}),
-                cls._IMAGES_KEY: xr.concat(load_channels(root, level=level), dim="c"),
+                cls._LABELS_KEY: load_labels(root, level=level).rename({"c": "l"}),
+                cls._IMAGES_KEY: load_channels(root, level=level),
             },
             tables=tables,
             paths=paths,
@@ -319,6 +321,38 @@ class Roi(abc.Mapping):
     @property
     def images(self) -> SpatialImage:
         return self.data[self._IMAGES_KEY]
+    
+    def table(self, _objects: Sequence[str] | str | None = None, columns: Sequence[str] | str = '*') -> pl.DataFrame:
+        if _objects is None:
+            tables = self.tables
+        elif isinstance(_objects, str):
+            tables = {_objects: self.tables[_objects]}
+        else:
+            tables = {k: self.tables[k] for k in _objects}
+
+        if isinstance(columns, str):
+            columns_expr = pl.col(columns)
+        else:
+            columns_expr = [pl.col(c) for c in columns]
+        idx_expr = [pl.col(idx) for idx in OBJECT_INDEX]
+
+        filt_tables = []
+        for name, table in tables.items():
+            idx = table.select(idx_expr)
+            data = table.select(columns_expr)
+            filt_tables.append(data.select(pl.exclude(set(data.columns).intersection(ROI_INDEX))).hstack(idx).with_columns(pl.lit(name).alias('object')))
+
+        # tables = [table.select(pl.col(columns)).with_columns(pl.lit(name).alias('object')) 
+        #           for name, table in tables.items()]
+        if filt_tables == []:
+            return pl.DataFrame()
+        return (
+            pl.concat(filt_tables, how='diagonal')
+            .select([
+                pl.col(['object', 'label']), 
+                pl.exclude(['object', 'label']),
+                ])
+        )
     
     @property
     def resources(self) -> dict[str, set[str]]:
@@ -469,11 +503,11 @@ class RoiMap(abc.Mapping):
     name: str | None = field(default=None)
 
     @classmethod
-    def from_files(cls, fns: list[str], level: int) -> "RoiMap":
+    def from_files(cls, fns: list[PathLike[str]], level: int, features_root: PathLike[str] | None = None) -> "RoiMap":
         rois = {}
         for fn in fns:
             fn = Path(fn)
-            roi = Roi.from_file(fn, level=level)
+            roi = Roi.from_file(fn, level=level, features_root = None if features_root is None else Path(features_root) / fn.stem)
             rois[fn.stem] = roi
 
         name = (fn.parent / "*").as_posix()
@@ -498,12 +532,35 @@ class RoiMap(abc.Mapping):
     #     )
     #     for k, v in aggs.items():
     #         print(_repr_roi_small(v))
+    def _index_to_name(self, index: int) -> str:
+        return sorted(list(self.keys()))[index]
 
-    def sel(self, **kwargs) -> "RoiMap":
+    def isel(self, **kwargs) -> "RoiMap | Roi":
+        if "roi" in kwargs:
+            roi_indices = kwargs.pop('roi')
+            if isinstance(roi_indices, list):
+                roi_names = list(map(self._index_to_name, roi_indices))
+            elif isinstance(roi_indices, slice | int):
+                roi_names = sorted(list(self.keys()))[roi_indices]
+            else:
+                raise TypeError('Only `list[int]`, `slice` or `int` allowed.')
+        else:
+            roi_names = sorted(list(self.keys()))
+        
+        if isinstance(roi_names, str):
+            return self.__getitem__(roi_names).isel(**kwargs)
+        return RoiMap(rois={roi_name: self.__getitem__(roi_name).isel(**kwargs) for roi_name in roi_names}, name=self.name)
+        #     RoiMap(rois=self.rois, name=self.name).sel(roi=roi_names).isel(**kwargs)
+        #     return self.sel(roi=roi_names).isel(**kwargs)
+        # else:
+        #     return RoiMap()
+
+
+    def sel(self, **kwargs) -> "RoiMap | Roi":
         if "roi" in kwargs:
             roi_names = kwargs.pop("roi")
             if isinstance(roi_names, str):
-                roi_names = (roi_names,)
+                return self.__getitem__(roi_names).sel(**kwargs)
             selected_rois = {
                 roi_name: self.__getitem__(roi_name) for roi_name in roi_names
             }
@@ -528,6 +585,13 @@ class RoiMap(abc.Mapping):
     @property
     def sizes(self) -> dict[Hashable, int]:
         return {"roi": len(self), **self.first().sizes}
+    
+    def table(self, _objects: Sequence[str] | str | None = None, columns: Sequence[str] | str = '*') -> "pl.DataFrame":
+        return pl.concat(
+            [
+                roi.table(_objects=_objects, columns=columns).with_columns(pl.lit(name).alias('roi')) 
+                for name, roi in self.items() 
+                ], how='diagonal').select([pl.col(EXPERIMENT_INDEX), pl.exclude(EXPERIMENT_INDEX)])
 
     def first(self) -> "Roi":
         try:
@@ -566,7 +630,7 @@ class RoiMap(abc.Mapping):
             rep.append(f"{roi.__repr__(collapse=True, indent=2)}")
         return "\n".join(rep)
 
-
+# %%
 # def check(rows):
 #     print(rows)
 #     return rows
@@ -1010,3 +1074,5 @@ class RoiMap(abc.Mapping):
 
 
 # # %%
+
+# %%

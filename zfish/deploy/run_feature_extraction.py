@@ -32,7 +32,6 @@ def main():
         fld = params.root
     print(fld)
     n = len(list(Path(fld).glob('*.h5')))
-    n = 3
 
     command = SLURM_COMMAND.format(n - 1, args.feature_extraction_params)
     print(command)

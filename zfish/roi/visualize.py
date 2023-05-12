@@ -1,3 +1,4 @@
+# %%
 from itertools import cycle
 from typing import TypeAlias
 
@@ -52,7 +53,7 @@ def imshow_map(
     if viewer is None:
         viewer = napari.Viewer()
     for name, roi in roi_map.items():
-        viewer = imshow(roi, viewer=viewer, name=name)
+        viewer = imshow_roi(roi, viewer=viewer, name=name)
     return viewer
 
 def imshow_roi(

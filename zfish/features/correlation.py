@@ -91,7 +91,7 @@ def get_colocalization_features(
             [
                 pl.col('label'),
                 pl.exclude('label').prefix(
-                    f"{img1_si.c.item()}-{img2_si.c.item()}_"
+                    f"{img1_si.c.item()}|{img2_si.c.item()}_"
                 ),
             ]
         )

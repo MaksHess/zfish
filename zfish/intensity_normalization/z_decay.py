@@ -1,12 +1,22 @@
-# %%
+# %% Imports and definitions
+from os import PathLike
+from pathlib import Path
+from typing import Any
+
 import matplotlib.pyplot as plt
 import polars as pl
 import seaborn as sns
+import tqdm
 
 from zfish.features.polars_utils import (
+    INTENSITY_FEATURE_COLUMNS,
     get_metadata,
     set_index_dtypes,
+    stack_channels,
     stack_correlation_metric_by_acquisition,
+    unnest_all_structs,
+    unnest_structs,
+    unstack_channels,
 )
 from zfish.intensity_normalization.models import (
     ExponentialModel,
@@ -15,127 +25,234 @@ from zfish.intensity_normalization.models import (
     LinearModel,
     Model,
 )
+from zfish.roi.spatial_roi import Roi, RoiMap, load_roi_tables
 
-pl.toggle_string_cache(True)
+pl.enable_string_cache(True)
 
+DEBUG = True
+INDEX = ('roi', 'object', 'label')
+COL_INDEX = [pl.col(e) for e in INDEX]
+CONTROL_WELLS = ["B07", "C07", "D07", "E07"]
+
+from typing import TypeVar
+
+T_AnyFrame = TypeVar('T_AnyFrame', pl.DataFrame, pl.LazyFrame)
+
+def index_first(df: T_AnyFrame) -> T_AnyFrame:
+    return df.select([pl.col(INDEX), pl.exclude(INDEX)])
+
+def read_table(root: PathLike[str], _object: str | None = "", use_pyarrow=True) -> pl.DataFrame:
+    fns = list(Path(root).rglob(f'{_object}*.parquet'))
+    tables = []
+    for fn in tqdm.tqdm(fns):
+        table = pl.read_parquet(fn, use_pyarrow=use_pyarrow).with_columns(pl.lit(fn.parent.name).alias('roi'), pl.lit(fn.stem).alias('object'))
+        tables.append(table)
+    return pl.concat(tables, how='diagonal')
+
+def scan_table(root: PathLike[str], _object: str | None = "") -> pl.LazyFrame:
+    fns = list(Path(root).rglob(f'{_object}*.parquet'))
+    tables = [
+        pl.scan_parquet(fn)
+        .with_columns(
+            pl.lit(fn.parent.name).alias('roi'), 
+            pl.lit(fn.stem).alias('object')
+            ) for fn in tqdm.tqdm(fns)]
+
+    return pl.concat(tables, how='diagonal')
+
+
+# %% Helper function for range rejection with plot
+def discard_bounds(df: pl.LazyFrame, feature: str, lower: float | None = None, upper: float | None = None, debug=DEBUG, ax=None) -> pl.LazyFrame:
+    if isinstance(df, pl.DataFrame):
+        df = df.lazy()
+
+    if lower is None and upper is None:
+        out = df
+    elif lower is None:
+        x = [upper]
+        linestyles=['dashed']
+        out = df.filter(pl.col(feature).lt(upper))
+    elif upper is None:
+        x = [lower]
+        linestyles=['dotted'] 
+        out = df.filter(pl.col(feature).gt(lower))
+    else:
+        x = [lower, upper]
+        linestyles=['dotted', 'dashed']
+        out = df.filter(pl.col(feature).is_between(lower, upper))
+    
+    if debug:
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(4, 3))
+        ax = sns.kdeplot(
+            df.select([
+                pl.col(INDEX), 
+                pl.col(feature),
+                ]).collect().to_pandas(), 
+            x=feature,
+            ax=ax)
+
+        y_lims = ax.get_ylim()
+        plt.vlines(
+            x=x,
+            ymin=y_lims[0],
+            ymax=y_lims[1],
+            colors=["k"],
+            linestyles=linestyles,
+        )
+    return out
+
+def remove_outliers(df: pl.LazyFrame, outliers: list[dict[str, Any]]) -> pl.LazyFrame:
+    for outlier in outliers:
+        df = partial(discard_bounds, **outlier)(df)
+    return df
+
+# %% Load data
+fld_features = Path(r"M:\marvwy\20220721_ZE4i2_aligned\features")
+fld_features_block = Path(r"M:\marvwy\20220721_ZE4i2_aligned\features_block")
+
+
+# df_files = read_table(fld_features, _object="", use_pyarrow=True)
+df_block = pl.read_parquet(fld_features_block, use_pyarrow=True).pipe(index_first)
+# df_lazy_files = scan_table(fld_features)
+df_lazy_block = pl.scan_parquet(fld_features_block / 'full.parquet').pipe(index_first)
+
+# %% Select nuclei measurements
+df_full = df_block.filter(pl.col('object')=='nucleiRaw3')
+df_full_lazy = df_lazy_block.filter(pl.col('object')=='nucleiRaw3')
+
+# %% Discard outliers
+from functools import partial, reduce
+from typing import Any, Callable, TypeVar
+
+outliers = [
+    {
+    'feature': "EquivalentSphericalRadius", # um
+    'lower': 4,
+    'upper': 8,
+    },
+    {
+    'feature': "Roundness",
+    'upper': 0.922,
+    },
+]
+
+df_clean = remove_outliers(df_full_lazy, outliers=outliers)
 # %%
-df_intensity = set_index_dtypes(
-    pl.read_parquet(
-        r"C:\Users\hessm\Documents\Programming\Python\zfish\data\features\intensity.parquet"
-    )
-)
 
-df_label = set_index_dtypes(
-    pl.read_parquet(
-        r"C:\Users\hessm\Documents\Programming\Python\zfish\data\features\label.parquet"
-    )
-)
-df_corr = set_index_dtypes(
-    pl.read_parquet(
-        r"C:\Users\hessm\Documents\Programming\Python\zfish\data\features\coloc.parquet"
-    )
-)
+df_meta = get_metadata(df_clean.select([pl.col('roi', 'object')]).collect(), control_wells=CONTROL_WELLS)
 
-df_distance = set_index_dtypes(
-    pl.read_parquet(
-        r"C:\Users\hessm\Documents\Programming\Python\zfish\data\features\distance.parquet"
-    )
-)
-
-df_alignment = stack_correlation_metric_by_acquisition(df_corr)
-
-
-# %%
-SPHERICAL_RADIUS_CUTOFF = (4, 8)
-ax = sns.kdeplot(df_label.to_pandas(), x="EquivalentSphericalRadius")
-y_lims = ax.get_ylim()
-plt.vlines(
-    x=SPHERICAL_RADIUS_CUTOFF,
-    ymin=y_lims[0],
-    ymax=y_lims[1],
-    colors=["k"],
-    linestyles=["dotted", "dashed"],
-)
-
-df_label_clean1 = df_label.filter(
-    pl.col("EquivalentSphericalRadius").is_between(*SPHERICAL_RADIUS_CUTOFF)
-)
-
-# %% Remove non-interphase cells by roundness
-ROUNDNESS_CUTOFF = 0.992
-ax = sns.kdeplot(df_label.to_pandas(), x="Roundness")
-y_lims = ax.get_ylim()
-plt.vlines(
-    x=ROUNDNESS_CUTOFF,
-    ymin=y_lims[0],
-    ymax=y_lims[1],
-    colors=["k"],
-    linestyles=["dotted", "dashed"],
-)
-
-df_label_clean = df_label_clean1.filter(pl.col("Roundness") > ROUNDNESS_CUTOFF)
-
-
-# %% Remove early stage embryos (< cycle 10)
-control_wells = ["B07", "C07", "D07", "E07"]
-df_meta = get_metadata(df_label_clean, control_wells=control_wells)
-
-df_meta_clean = df_meta
-
-# %% Merge relevant columns of dataframes
-index = ["roi", "structure", "label", "channel", "stain", "acquisition"]
-obj_index = ["roi", "structure", "label"]
+# %% Select and join relevant columns
+features = ["Centroid", "PhysicalSize", "EquivalentSphericalRadius", "Roundness", "embryoRaw-1_CentroidDistToBorder", "embryoRaw-1_CentroidDistAlongZ"]
 
 
 df = (
-    df_intensity.with_columns(
+df_clean
+.select([
+    pl.col(INDEX),
+    pl.col(features),
+    pl.col('^.*_Mean$'),
+    pl.col('^.*PearsonR$'),
+])
+.join(df_meta.lazy(), on=["roi"])
+.collect()
+.pipe(unnest_structs, cols=['Centroid'])
+.with_columns(
         [
-            pl.col("channel")
-            .cast(pl.Utf8)
-            .str.split(".")
-            .arr.get(0)
-            .cast(pl.Categorical)
-            .alias("stain"),
-            pl.col("channel")
-            .cast(pl.Utf8)
-            .str.split(".")
-            .arr.get(1)
-            .cast(pl.UInt16)
-            .alias("acquisition"),
-        ]
-    )
-    .select([pl.col(index), pl.col("Mean"), pl.col("Mean").log(10).alias("log10_Mean")])
-    .join(
-        df_label_clean.select(
-            obj_index
-            + ["Centroid-z", "PhysicalSize", "EquivalentSphericalRadius", "Roundness"]
-        ),
-        on=obj_index,
-    )
-    .join(df_alignment, on=["roi", "structure", "label", "acquisition"])
-    .join(
-        df_distance.select(
-            obj_index
-            + ["embryoRaw.1_CentroidDistToBorder", "embryoRaw.1_CentroidDistAlongZ"]
-        ),
-        on=obj_index,
-    )
-    .join(df_meta_clean, on=["roi"])
-    .with_columns(
-        [
-            (pl.col("Centroid-z") - pl.col("embryoRaw.1_CentroidDistAlongZ")).alias(
+            (pl.col("Centroid-z") - pl.col("embryoRaw-1_CentroidDistAlongZ")).alias(
                 "mediumPath"
             ),
-            pl.col("embryoRaw.1_CentroidDistAlongZ").alias("embryoPath"),
+            pl.col("embryoRaw-1_CentroidDistAlongZ").alias("embryoPath"),
         ]
     )
 )
+df
+# %%
+from zfish.features.polars_utils import (
+    _split_channel_column,
+    _split_feature_name,
+    _split_single_channel,
+)
 
+_split_feature_name(df_clean.columns)
 
+# %%
+_split_feature_name(df.select(pl.col("^.*Pearson.*$")).columns)
+# %%
+channel_patterns = ['^DAPI-0_.*$', '^DAPI-1_.*$', '^Pol-II-S5P-2_.*$', '^bCatenin-3_.*$']
+CORRELATION_FEATURE_PATTERNS = ['^.*PearsonR$']
+df_test = df_files.select(list(INDEX) + ['BoundingBox', 'Centroid'] + channel_patterns + list(CORRELATION_FEATURE_PATTERNS)).filter(pl.col('roi').is_in(['G03_px+2426_py-0008', 'E07_px+2226_py+1238', 'E05_px-1798_py-0764']))
+# %%
+CORRELATION_FEATURE_PATTERNS = ['^.*PearsonR$']
+ref_channel = 'DAPI-1'
+df_corr = df
+
+from zfish.features.polars_utils import (
+    INTENSITY_FEATURE_PATTERNS,
+    _split_feature_name,
+)
+
+# %%
+stack_channels(df, patterns=INTENSITY_FEATURE_PATTERNS)
+# %%
+# stack_channels(df.select([pl.col(INDEX), *[pl.col(pattern) for pattern in CORRELATION_FEATURE_PATTERNS]]))
+# _split_single_channel(df.select(pl.col(INDEX), pl.col('^DAPI-0-DAPI-1.*$')))
+df.select([pl.col(e) for e in list(INTENSITY_FEATURE_PATTERNS) + CORRELATION_FEATURE_PATTERNS])
+# %%
+df.select()
+# %% Stack channels
+# df.select(pl.exclude('^.*[0, 2, 3]_Mean$'))
+df_tall = stack_channels(df)
+# %%
+df.select(pl.col('^.*PearsonR$'))
+# %%
+REF_CHANNEL = 'DAPI-1'
+(
+    pl.Series(
+    name='features',
+    values=df.select(pl.col('^.*PearsonR$')).columns,
+    )
+    .to_frame()
+    .select(
+        [
+            pl.all().str.split('-').arr.slice(0, 2).arr.join('-').alias('p1'),
+            pl.all().str.split('-').arr.slice(2, None).arr.join('-').alias('p2'),
+        ]
+    )
+    .select(
+        [
+            pl.concat_list(pl.all()).arr.join('*')
+        ]
+    )
+    .select([
+        pl.all().str.split('_').arr.eval(pl.element().str.split('*').arr.explode())
+    ])
+    .select([
+        pl.all().arr.get(0).alias('channel0'),
+        pl.all().arr.get(1).alias('channel1'),
+        pl.all().arr.get(2).alias('feature'),
+    ])
+    .select([
+        pl.when(pl.col('channel0')=='DAPI-1').then(pl.col('channel1')).otherwise(pl.col('channel0')).alias('channel'),
+        pl.lit(REF_CHANNEL).alias('ref_channel'),
+        pl.col('feature'),
+    ])
+    # .select([
+    #     pl.all().arr.eval(pl.element())
+    # ])
+#     .select([
+#         pl.all().arr.slice(0, 2).alias('channels').arr.contains(REF_CHANNEL),
+#         pl.all().arr.last().alias('feature'),
+# # 
+#     ])
+        
+)
+# df.select(pl.col('^.*PearsonR$')).columns
+    
 # %% Remove individual misaligned cells
 ALIGNMENT_SCORE_CUTOFF = 0.85
 ax = sns.kdeplot(
-    df_alignment.filter(pl.col("acquisition") != 1)
+    df_tall.filter(pl.col("acquisition") != 1)
     .select(
         [
             pl.col("acquisition").cast(pl.Utf8).cast(pl.Categorical),
@@ -392,6 +509,7 @@ img_corr_1step = apply_model_to_channel(mdl_1step, img)
 img_corr_2step = apply_model_to_channel(mdl_2step, img, lbl)
 # %%
 import napari
+
 viewer = napari.Viewer()
 imshow(img, viewer)
 imshow(img_corr_1step, viewer)

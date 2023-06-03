@@ -6,7 +6,10 @@ import numpy as np
 from scipy import sparse
 from sklearn.neighbors import KDTree
 
-from neighborhoods import knn_adjacency_matrix, radius_adjacency_matrix
+from zfish.features.neighborhood.neighborhoods import (
+    knn_adjacency_matrix,
+    radius_adjacency_matrix,
+)
 
 
 def get_random_features(n_obs, n_var, seed=42):

@@ -25,6 +25,7 @@ def _get_channels_safe(img: LabelImage | SpatialImage) -> set[str]:
 
 Channel: TypeAlias = str
 ChannelPair: TypeAlias = tuple[str, str]
+ChannelSet: TypeAlias = tuple[str, ...]
 LabelObject: TypeAlias = tuple[str, int]
 Feature: TypeAlias = Any
 
@@ -222,6 +223,10 @@ class CorrelationFeature(BaseModel):
         )
 
 
+class DensityFeature(BaseModel):
+    labels: set[str]
+    
+
 class Features(BaseModel):
     label: LabelFeature
     intensity: IntensityFeature
@@ -250,9 +255,11 @@ class Features(BaseModel):
         return self
 
 
-class IntensityCorrectionDirectories(BaseModel):
-    time_decay_models: Path
+class IntensityCorrection(BaseModel):
+    t_decay_models: Path
     z_decay_models: Path
+    z_decay_two_step_label: str | None = None
+    z_decay_add_model_name_to_feature_path: bool = False
 
 
 class SiteFeatureExtractionParams(YamlModel):
@@ -260,7 +267,7 @@ class SiteFeatureExtractionParams(YamlModel):
     output_path: Path
     level: int
     features: Features
-    intensity_correction: IntensityCorrectionDirectories
+    intensity_correction: IntensityCorrection
 
     def validate_roi(self) -> "SiteFeatureExtractionParams":
         roi = Roi.from_file(self.roi_path, level=self.level)
@@ -273,11 +280,11 @@ class FeatureExtractionParams(YamlModel):
     root: Path
     image_dir: str | None
     output_dir: str = "features"
-    image_path: Path | None = None
-    output_path: Path | None = None
     level: int
     features: Features
-    intensity_correction: IntensityCorrectionDirectories
+    intensity_correction: IntensityCorrection
+    image_path: Path | None = None
+    output_path: Path | None = None
 
     @validator("image_path", always=True)
     def _resolve_image_path(cls, v, values):
@@ -290,8 +297,12 @@ class FeatureExtractionParams(YamlModel):
 
     @validator("output_path", always=True)
     def _resolve_output_path(cls, v, values):
+        print(values)
         if v is None:
-            return values["root"] / values["output_dir"]
+            if values["intensity_correction"].z_decay_add_model_name_to_feature_path:
+                return values["root"] / values['output_dir'] / values['intensity_correction'].z_decay_models.name
+            else:
+                return values["root"] / values["output_dir"]
         else:
             return v
 

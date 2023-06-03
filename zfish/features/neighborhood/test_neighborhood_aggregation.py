@@ -1,20 +1,20 @@
-import numpy as np
-
 import aggregation_functions as agg
+import numpy as np
+from neighborhood_aggregation import aggregate_table_dense_parallel, aggregate_table_nan
+
 from data import (
     get_empty_adjacency_matrix,
     get_full_adjacency_matrix,
     get_random_features,
     get_self_adjacency_matrix,
 )
-from neighborhood_aggregation import aggregate_table_dense_parallel, aggregate_table_nan
 
 
 def test_empty_neighborhood_aggregation(neighborhood_aggregation_function):
     empty_nhd = get_empty_adjacency_matrix(n_obs=N_OBS)
     for aggfun in agg.get_aggregation_functions():
         result = neighborhood_aggregation_function(empty_nhd, FEAT, aggfun)
-        if aggfun.__name__ == "SUM":
+        if aggfun.__name__ == "Sum":
             assert np.allclose(result, np.full(FEAT.shape, 0.0))
         else:
             assert np.allclose(result, np.full(FEAT.shape, np.nan), equal_nan=True)
@@ -22,15 +22,15 @@ def test_empty_neighborhood_aggregation(neighborhood_aggregation_function):
 
 def test_self_neighborhood_aggregation(neighborhood_aggregation_function):
     self_nhd = get_self_adjacency_matrix(n_obs=N_OBS)
-    for aggfun in [agg.MEAN, agg.MEDIAN, agg.MAX, agg.MIN, agg.SUM, agg.CIRCMEAN]:
+    for aggfun in [agg.Mean, agg.Median, agg.Max, agg.Min, agg.Sum, agg.CircMean]:
         result = neighborhood_aggregation_function(self_nhd, FEAT, aggfun)
         assert np.allclose(result, FEAT)
 
-    for aggfun in [agg.STD, agg.VAR, agg.CIRCVAR]:
+    for aggfun in [agg.Std, agg.Var, agg.CircVar]:
         result = neighborhood_aggregation_function(self_nhd, FEAT, aggfun)
         assert np.allclose(result, np.zeros_like(FEAT))
 
-    for aggfun in [agg.CIRCR]:
+    for aggfun in [agg.CircR]:
         result = neighborhood_aggregation_function(self_nhd, FEAT, aggfun)
         assert np.allclose(result, np.ones_like(FEAT))
 

@@ -1,5 +1,5 @@
-# root: "/data/active/marvwy/20220721_ZE4i2_aligned"
-root: "M:\\marvwy\\20220721_ZE4i2_aligned"
+root: "/data/active/marvwy/20220721_ZE4i2_aligned"
+# root: "M:\\marvwy\\20220721_ZE4i2_aligned"
 
 image_dir: "imgs"
 
@@ -30,18 +30,18 @@ features:
     # - "cyto"
     channels:
     - "*"
-    # - "Pol-II-S2P-0"
+    # - "Pol-II-S2P.0"
 
   correlation:
     labels:
     - "nucleiRaw3" 
     channel_pairs:
-    - - "DAPI-0"
-      - "DAPI-1"
-    - - "DAPI-1"
-      - "DAPI-2"
-    - - "DAPI-1"
-      - "DAPI-3"
+    - - "DAPI.0"
+      - "DAPI.1"
+    - - "DAPI.1"
+      - "DAPI.2"
+    - - "DAPI.1"
+      - "DAPI.3"
 
   distance:
     labels:
@@ -73,5 +73,9 @@ features:
 
 
 intensity_correction:
-  time_decay_models: "/data/active/marvwy/20220721_ZE4i2_aligned/models/time_decay"
-  z_decay_models: "/data/active/marvwy/20220721_ZE4i2_aligned/models/z_decay"
+  t_decay_models: "/data/active/marvwy/20220721_ZE4i2_aligned/models/t_decay"
+  z_decay_models: "/data/active/marvwy/20220721_ZE4i2_aligned/models/z_decay/ExpFitLinear(loss='huber', features=['Centroid-z'])"
+  # t_decay_models: "M:\\marvwy\\20220721_ZE4i2_aligned\\models\\t_decay"
+  # z_decay_models: "M:\\marvwy\\20220721_ZE4i2_aligned\\models\\z_decay\\ExpFitLinear(loss='huber', features=['MediumPath', 'EmbryoPath'])"
+  z_decay_two_step_label: "embryoRaw"
+  z_decay_add_model_name_to_feature_path: true

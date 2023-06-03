@@ -1,64 +1,92 @@
+# %%
 import numba as nb
 import numpy as np
 from numpy.typing import NDArray
 
 __all__ = [
-    "MEAN",
-    "MEDIAN",
-    "MAX",
-    "MIN",
-    "SUM",
-    "STD",
-    "VAR",
-    "CIRCMEAN",
-    "CIRCR",
-    "CIRCVAR",
-    "get_aggregation_functions"
+    "Mean",
+    "Median",
+    "Mode",
+    "Max",
+    "Min",
+    "Sum",
+    "Std",
+    "Var",
+    "CircMean",
+    "CircR",
+    "CircVar",
+    "ValueCounts",
+    "quantile_factory"
 ]
 
-# TODO: Implement Mode.
+
+def quantile_factory(*qs: float):
+    for q in qs:
+        @nb.njit
+        def quantile(arr):
+            return np.quantile(arr, q)
+        quantile.__name__ = f'Q{q:.2f}'
+        yield(quantile)
 
 @nb.njit
-def MEAN(arr: NDArray) -> NDArray:
+def Mean(arr: NDArray) -> NDArray:
     return np.nanmean(arr)
 
 
 @nb.njit
-def MEDIAN(arr: NDArray) -> NDArray:
+def Median(arr: NDArray) -> NDArray:
     return np.nanmedian(arr)
 
 
 @nb.njit
-def MAX(arr: NDArray) -> NDArray:
+def Max(arr: NDArray) -> NDArray:
     if arr.size == 0:
         return np.nan
     return np.nanmax(arr)
 
 
 @nb.njit
-def MIN(arr: NDArray) -> NDArray:
+def Min(arr: NDArray) -> NDArray:
     if arr.size == 0:
         return np.nan
     return np.nanmin(arr)
 
 
 @nb.njit
-def _QUANTILE(arr: NDArray, q: float) -> NDArray:
+def ValueCounts(arr):
+    counter = dict()
+    for e in arr.flat:
+        if e == np.nan:
+            continue
+        elif e not in counter:
+            counter[e] = 1
+        else:
+            counter[e] += 1
+    return sorted(counter.items(), key=lambda x: (x[1], x[0]), reverse=True)
+
+
+@nb.njit
+def Mode(arr):
+    return ValueCounts(arr)[0][0]
+
+
+@nb.njit
+def _Quantile(arr: NDArray, q: float) -> NDArray:
     return np.nanquantile(arr, q)
 
 
 @nb.njit
-def SUM(arr: NDArray) -> NDArray:
+def Sum(arr: NDArray) -> NDArray:
     return np.nansum(arr)
 
 
 @nb.njit
-def STD(arr: NDArray) -> NDArray:
+def Std(arr: NDArray) -> NDArray:
     return np.nanstd(arr)
 
 
 @nb.njit
-def VAR(arr: NDArray) -> NDArray:
+def Var(arr: NDArray) -> NDArray:
     return np.nanvar(arr)
 
 
@@ -74,7 +102,7 @@ def _circfuncs_common(samples, high, low):
 
 
 @nb.njit
-def CIRCMEAN(samples, high=2 * np.pi, low=0.0) -> float:
+def CircMean(samples, high=2 * np.pi, low=0.0) -> float:
     samples, sin_samp, cos_samp, nmask = _circfuncs_common(samples, high=high, low=low)
 
     sin_sum: float = sin_samp.sum()
@@ -91,7 +119,7 @@ def CIRCMEAN(samples, high=2 * np.pi, low=0.0) -> float:
 
 
 @nb.njit
-def CIRCR(samples, high=2 * np.pi, low=0.0) -> float:
+def CircR(samples, high=2 * np.pi, low=0.0) -> float:
     samples, sin_samp, cos_samp, nmask = _circfuncs_common(samples, high=high, low=low)
 
     nsum = np.sum(~nmask)
@@ -106,20 +134,6 @@ def CIRCR(samples, high=2 * np.pi, low=0.0) -> float:
 
 
 @nb.njit
-def CIRCVAR(samples, high=2 * np.pi, low=0.0) -> float:
-    return 1 - CIRCR(samples=samples, high=high, low=low)
+def CircVar(samples, high=2 * np.pi, low=0.0) -> float:
+    return 1 - CircR(samples=samples, high=high, low=low)
 
-
-def get_aggregation_functions():
-    return {
-        MEAN,
-        MEDIAN,
-        MAX,
-        MIN,
-        SUM,
-        STD,
-        VAR,
-        CIRCMEAN,
-        CIRCR,
-        CIRCVAR,
-    }

@@ -26,27 +26,29 @@ import xarray as xr
 
 from zfish.features.types import LabelImage, SpatialImage
 from zfish.image.image import to_si
+from zfish.intensity_normalization.models import apply_model_to_channel
 from zfish.io import h5
 from zfish.roi._roi_formatting import SORT_KEY, _coordinates_repr
 
 if TYPE_CHECKING:
     import polars as pl
 
+    from zfish.intensity_normalization.models import Model
+
 # pl.enable_string_cache(True)
 
 Image: TypeAlias = LabelImage | SpatialImage
 Element: TypeAlias = Image | pl.DataFrame
 
-EXPERIMENT_INDEX = ('roi', 'object', 'label')
-ROI_INDEX = ('object', 'label')
-OBJECT_INDEX = ('label', )
+EXPERIMENT_INDEX = ("roi", "object", "label")
+ROI_INDEX = ("object", "label")
+OBJECT_INDEX = ("label",)
+
 
 def _load_roi(
     root_path: PathLike,
-    attrs_select: dict[str, str | int | tuple[str | int, ...]] | None = None,
-) -> SpatialImage:
-    if attrs_select is None:
-        attrs_select = {"img_type": "intensity", "level": 0}
+    attrs_select: dict[str, str | int | tuple[str | int, ...]],
+) -> list[SpatialImage]:
     f = h5py.File(root_path)
     dsets = [to_si(dset) for dset in h5.select(f, attrs_select)]
     return dsets
@@ -71,10 +73,13 @@ def load_labels(root_path: PathLike, level: int | None = None) -> LabelImage:
     return xr.concat(_load_roi(root_path=root_path, attrs_select=attrs_select), dim="c")
 
 
-def load_roi_tables(root_path: PathLike, lazy: bool = False) -> dict[str, "pl.DataFrame"]:
+def load_roi_tables(
+    root_path: PathLike, lazy: bool = False
+) -> dict[str, "pl.DataFrame"]:
     import polars as pl
+
     tables = {}
-    for fn in Path(root_path).glob('*.parquet'):
+    for fn in Path(root_path).glob("*.parquet"):
         structure = fn.stem
         if lazy:
             tables[structure] = pl.scan_parquet(fn)
@@ -82,7 +87,87 @@ def load_roi_tables(root_path: PathLike, lazy: bool = False) -> dict[str, "pl.Da
             tables[structure] = pl.read_parquet(fn)
     return tables
 
-def get_bounding_box_slices(df: "pl.DataFrame", index_col: str | tuple[str, str] = 'label'):
+
+# def load_ill_corr_models(root_path: PathLike) -> dict[str, dict[str, dict[str, "Model"]]]:
+#     """
+#     Load illumination correction model from a directory with the following structure:
+#     - root_path
+#         - z_decay
+#             - stain0
+#                 - Model0
+#                 - Model1
+#                 - Model2
+#             - stain1
+#                 - Model0
+#         - t_decay
+#     ...
+#     """
+#     models = dict()
+#     for model_fn in Path(root_path).rglob("*.pkl"):
+#         rel_fn = model_fn.relative_to(root_path)
+#         keys = rel_fn.parts[:-1] + (rel_fn.stem,)
+#         print(keys)
+#         level = models
+#         for key in keys:
+#             print(key)
+#             level = level[key]
+#         level[key] = Model.load(model_fn)
+#     return models
+
+
+# def write_ill_corr_models(
+#     root_path: PathLike, models_root: dict[str, dict[str, dict[str, "Model"]]]
+# ) -> None:
+#     for model_type, models in models_root.items():
+#         for channel, channel_models in models.items():
+#             for model_type, channel_model in channel_models.items():
+#                 if channel_model is None:
+#                     continue
+#                 channel_model.save(
+#                     directory=Path(root_path) / channel,
+#                     file_name=f"{str(channel_model)}",
+#                     mode="wb",
+#                 )
+
+import os
+
+from zfish.intensity_normalization.models import Model
+
+
+def write_models(models, root: Path | str):
+    """
+    Write a nested dict to a nested file structure.
+    """
+    for key, value in models.items():
+        # Create a directory for the current key
+        current_path = os.path.join(root, str(key))
+        os.makedirs(current_path, exist_ok=True)
+
+        # Recursively write sub-dictionaries or write the value to a file
+        if isinstance(value, dict):
+            write_models(value, current_path)
+        elif isinstance(value, Model):
+            value.save(directory=current_path, file_name="model", mode="wb")
+
+
+def read_models(root: Path | str):
+    """
+    Read a nested file structure to a nested dict.
+    """
+    result = {}
+    for item in os.listdir(root):
+        item_path = os.path.join(root, item)
+        if os.path.isdir(item_path):
+            # Recursively process subdirectories
+            result[item] = read_models(item_path)
+        elif os.path.isfile(item_path) and item_path.endswith(".pkl"):
+            result = Model.load(item_path)
+    return result
+
+
+def get_bounding_box_slices(
+    df: "pl.DataFrame", index_col: str | tuple[str, str] = "label"
+):
     BOUNDING_BOX_STRUCT_COLUMN = "BoundingBox"
     BOUNDING_BOX_COLUMNS = [
         "lower-x",
@@ -94,8 +179,7 @@ def get_bounding_box_slices(df: "pl.DataFrame", index_col: str | tuple[str, str]
     ]
 
     return (
-        df
-        .select(pl.col(index_col), pl.col(BOUNDING_BOX_STRUCT_COLUMN))
+        df.select(pl.col(index_col), pl.col(BOUNDING_BOX_STRUCT_COLUMN))
         .unnest(BOUNDING_BOX_STRUCT_COLUMN)
         .select(
             [
@@ -105,12 +189,16 @@ def get_bounding_box_slices(df: "pl.DataFrame", index_col: str | tuple[str, str]
                 pl.concat_list(pl.col(BOUNDING_BOX_COLUMNS[4:]).alias("z")),
             ]
         )
-        .to_pandas().set_index('label')
+        .to_pandas()
+        .set_index("label")
         .applymap(lambda x: slice(x[0], x[1], None))
         .T.to_dict()
     )
 
-def get_bounding_box(df: "pl.DataFrame", index_col: str | tuple[str, str] = 'label'):# -> dict[str, slice]:
+
+def get_bounding_box(
+    df: "pl.DataFrame", index_col: str | tuple[str, str] = "label"
+):  # -> dict[str, slice]:
     BOUNDING_BOX_STRUCT_COLUMN = "BoundingBox"
     BOUNDING_BOX_COLUMNS = [
         "lower-x",
@@ -122,15 +210,14 @@ def get_bounding_box(df: "pl.DataFrame", index_col: str | tuple[str, str] = 'lab
     ]
 
     return (
-        df
-        .select(pl.col(BOUNDING_BOX_STRUCT_COLUMN))
+        df.select(pl.col(BOUNDING_BOX_STRUCT_COLUMN))
         .unnest(BOUNDING_BOX_STRUCT_COLUMN)
         .select(
             [
                 # pl.col('label').min().alias('lower-label'),
                 # pl.col('label').max().alias('upper-label'),
-                pl.col('^lower.*$').min(),
-                pl.col('^upper.*$').max(),
+                pl.col("^lower.*$").min(),
+                pl.col("^upper.*$").max(),
             ]
         )
         .select(
@@ -154,11 +241,13 @@ def empty_data():
         "images": xr.DataArray(),
     }
 
+
 # TODO: Maybe use a StrEnum (available from 3.11)
 class TableWriteStrategy(Enum):
     OVERWRITE = auto()
     MERGE = auto()
     RAISE = auto()
+
 
 def _get_channels_safe(img: LabelImage | SpatialImage) -> set[str]:
     """
@@ -167,30 +256,58 @@ def _get_channels_safe(img: LabelImage | SpatialImage) -> set[str]:
     trying to serialize using yaml.dump. Must be some weird interaction w/ numpy/xarray
     under the hood, explicitly converting to `str` in a comprehension does the trick.
     """
-    if 'l' in img.dims:
-        return set([str(e) for e in img.l.values])
-    return set([str(e) for e in img.c.values])
+    if "l" in list(img.coords.keys()):
+        if 'l' in img.dims:
+            return set([str(e) for e in img.l.values])
+        else:
+            return set([str(img.l.item())])
+    elif 'c' in list(img.coords.keys()):
+        if 'c' in img.dims:
+            return set([str(e) for e in img.c.values])
+        else:
+            return set([str(img.c.item())])
+    else:
+        raise ValueError("No channel axis  ('l' or 'c') found!")
 
+    
+SEL_KWARGS = ('method', 'tolerance', 'drop')
 
 @dataclass
 class Roi(abc.Mapping):
     data: Mapping[str, Any] = field(default_factory=empty_data)
     tables: Mapping[str, Any] = field(default_factory=dict)
+    models: Mapping[str, Mapping[str, Mapping[str, Model]]] = field(default_factory=dict)
     paths: Mapping[str, Path] = field(default_factory=dict)
     name: str = field(default="")
     _LABELS_KEY: str = field(default="labels", repr=False)
     _IMAGES_KEY: str = field(default="images", repr=False)
     _FEATURES_KEY: str = field(default="features", repr=False)
-    _TABLES_IDX: tuple[str, ...] | str = 'label'
+    _ILL_CORR_KEY: str = field(default="models", repr=False)
+    _TABLES_IDX: tuple[str, ...] | str = field(default="label", repr=False)
+    _TWO_STEP_ILL_CORR_LABEL: str | None = field(default="embryoRaw", repr=False)
 
     @classmethod
-    def from_file(cls, root: PathLike[str], level: int, features_root: PathLike | None = None, lazy_tables: bool = False) -> "Roi":
+    def from_file(
+        cls,
+        root: PathLike[str],
+        level: int,
+        features_root: PathLike[str] | None = None,
+        ill_corr_root: PathLike[str] | None = None,
+        lazy_tables: bool = False,
+    ) -> "Roi":
         root = Path(root)
         name = root.stem
         if features_root is None:
-            features_root = root.parent.parent / 'features' / name
-        paths = {'root': root, cls._FEATURES_KEY: features_root}
+            features_root = root.parent.parent / "features" / name
+        if ill_corr_root is None:
+            ill_corr_root = root.parent.parent / "models"
+        paths = {
+            "root": root,
+            cls._FEATURES_KEY: features_root,
+            cls._ILL_CORR_KEY: ill_corr_root,
+        }
         tables = load_roi_tables(features_root, lazy=lazy_tables)
+        models = read_models(Path(ill_corr_root))
 
         print(f"loading {name}...")
         return Roi(
@@ -199,43 +316,66 @@ class Roi(abc.Mapping):
                 cls._IMAGES_KEY: load_channels(root, level=level),
             },
             tables=tables,
+            models=models,
             paths=paths,
             name=name,
         )
-    
-    def write_tables(self, strategy: TableWriteStrategy = TableWriteStrategy.MERGE) -> None:
-        assert self._FEATURES_KEY in self.paths
-        root_path = self.paths[self._FEATURES_KEY]
-        
+
+    def write_tables(
+        self, 
+        strategy: TableWriteStrategy = TableWriteStrategy.MERGE, 
+        root_path: Path | str | None = None,
+    ) -> None:
+        assert self._FEATURES_KEY in self.paths or root_path is not None
+        if root_path is None:
+            root_path = self.paths[self._FEATURES_KEY]
+
         if self.tables == {}:
             return
-        
+
         for structure, df in self.tables.items():
-            out_file = root_path / f"{structure}.parquet"
+            out_file = Path(root_path) / f"{structure}.parquet"
             out_file.parent.mkdir(exist_ok=True, parents=True)
             match strategy:
                 case TableWriteStrategy.RAISE:
                     if out_file.exists():
-                        raise FileExistsError(f"There's a file at {out_file}. Use `TableWriteStrategy.MERGE` or `TableWriteStrategy.OVERWRITE` to merge/overwrite.")
+                        raise FileExistsError(
+                            f"There's a file at {out_file}. Use `TableWriteStrategy.MERGE` or `TableWriteStrategy.OVERWRITE` to merge/overwrite."
+                        )
                     new_table = df
                 case TableWriteStrategy.MERGE:
-                    old_table = pl.read_parquet(out_file) if out_file.exists() else pl.DataFrame(df[self._TABLES_IDX])
-                    shared_feature_columns = tuple(set(old_table.drop(self._TABLES_IDX).columns).intersection(df.drop(self._TABLES_IDX).columns))
-                    new_table = old_table.drop(shared_feature_columns).join(df, on=self._TABLES_IDX, how='outer')
+                    old_table = (
+                        pl.read_parquet(out_file)
+                        if out_file.exists()
+                        else pl.DataFrame(df[self._TABLES_IDX])
+                    )
+                    shared_feature_columns = tuple(
+                        set(old_table.drop(self._TABLES_IDX).columns).intersection(
+                            df.drop(self._TABLES_IDX).columns
+                        )
+                    )
+                    new_table = old_table.drop(shared_feature_columns).join(
+                        df, on=self._TABLES_IDX, how="outer"
+                    )
                 case TableWriteStrategy.OVERWRITE:
                     new_table = df
                 case _:
-                    raise ValueError(f"Unknown strategy: `{strategy}`, pick one of `{TableWriteStrategy.__members__}`")
+                    raise ValueError(
+                        f"Unknown strategy: `{strategy}`, pick one of `{TableWriteStrategy.__members__}`"
+                    )
             new_table.write_parquet(out_file)
 
-    
     def rename(self, name: str) -> "Roi":
         return Roi(
             **{
-                **{attr: getattr(self, attr) for attr in self.__dataclass_fields__ if not attr.startswith('_')},
-                'name': name,
+                **{
+                    attr: getattr(self, attr)
+                    for attr in self.__dataclass_fields__
+                    if not attr.startswith("_")
+                },
+                "name": name,
             }
-        ) 
+        )
 
     # TODO: Make sure the right kwargs are passed on (currently none).
     # TODO: Refactor the following functions DRY
@@ -249,23 +389,23 @@ class Roi(abc.Mapping):
     def sel(self, **kwargs) -> "Roi":
         out = dict()
         for k, elem in self.data.items():
-            valid_keys = set(kwargs.keys()).intersection(elem.dims)
+            valid_keys = set(kwargs.keys()).intersection(elem.dims + SEL_KWARGS)
             out[k] = elem.sel(**{k: kwargs[k] for k in valid_keys})
-        return Roi(data=out, tables=self.tables, name=self.name, paths=self.paths)
+        return Roi(data=out, tables=self.tables, models=self.models, name=self.name, paths=self.paths)
 
     def isel(self, **kwargs) -> "Roi":
         out = dict()
         for k, elem in self.data.items():
             valid_keys = set(kwargs.keys()).intersection(elem.dims)
             out[k] = elem.isel(**{k: kwargs[k] for k in valid_keys})
-        return Roi(data=out, tables=self.tables, name=self.name, paths=self.paths)
+        return Roi(data=out, tables=self.tables, models=self.models, name=self.name, paths=self.paths)
 
     def drop_sel(self, **kwargs) -> "Roi":
         out = dict()
         for k, elem in self.data.items():
             valid_keys = set(kwargs.keys()).intersection(elem.dims)
             out[k] = elem.drop_sel(**{k: kwargs[k] for k in valid_keys})
-        return Roi(data=out, tables=self.tables, name=self.name, paths=self.paths)
+        return Roi(data=out, tables=self.tables, models=self.models, name=self.name, paths=self.paths)
 
     def drop_dim(self, dim: Literal["l", "c"]) -> "Roi":
         assert dim in ["l", "c"]
@@ -276,6 +416,7 @@ class Roi(abc.Mapping):
                     self._IMAGES_KEY: self[self._IMAGES_KEY],
                 },
                 tables=self.tables,
+                models=self.models,
                 name=self.name,
                 paths=self.paths,
             )
@@ -286,6 +427,7 @@ class Roi(abc.Mapping):
                     self._IMAGES_KEY: empty_data()[self._IMAGES_KEY],
                 },
                 tables=self.tables,
+                models=self.models,
                 name=self.name,
                 paths=self.paths,
             )
@@ -294,6 +436,7 @@ class Roi(abc.Mapping):
         return Roi(
             data={k: func(v, **kwargs) for k, v in self.data.items()},
             tables=self.tables,
+            models=self.models,
             name=self.name,
             paths=self.paths,
         )
@@ -321,8 +464,12 @@ class Roi(abc.Mapping):
     @property
     def images(self) -> SpatialImage:
         return self.data[self._IMAGES_KEY]
-    
-    def table(self, _objects: Sequence[str] | str | None = None, columns: Sequence[str] | str = '*') -> pl.DataFrame:
+
+    def table(
+        self,
+        _objects: Sequence[str] | str | None = None,
+        columns: Sequence[str] | str = "*",
+    ) -> pl.DataFrame:     
         if _objects is None:
             tables = self.tables
         elif isinstance(_objects, str):
@@ -340,25 +487,28 @@ class Roi(abc.Mapping):
         for name, table in tables.items():
             idx = table.select(idx_expr)
             data = table.select(columns_expr)
-            filt_tables.append(data.select(pl.exclude(set(data.columns).intersection(ROI_INDEX))).hstack(idx).with_columns(pl.lit(name).alias('object')))
+            filt_tables.append(
+                data.select(pl.exclude(set(data.columns).intersection(ROI_INDEX)))
+                .hstack(idx)
+                .with_columns(pl.lit(name).alias("object"))
+            )
 
-        # tables = [table.select(pl.col(columns)).with_columns(pl.lit(name).alias('object')) 
+        # tables = [table.select(pl.col(columns)).with_columns(pl.lit(name).alias('object'))
         #           for name, table in tables.items()]
         if filt_tables == []:
             return pl.DataFrame()
-        return (
-            pl.concat(filt_tables, how='diagonal')
-            .select([
-                pl.col(['object', 'label']), 
-                pl.exclude(['object', 'label']),
-                ])
+        return pl.concat(filt_tables, how="diagonal").select(
+            [
+                pl.col(["object", "label"]),
+                pl.exclude(["object", "label"]),
+            ]
         )
-    
+
     @property
     def resources(self) -> dict[str, set[str]]:
         return {
-            'channels': _get_channels_safe(self.images),
-            'label_images': _get_channels_safe(self.labels),
+            "channels": _get_channels_safe(self.images),
+            "label_images": _get_channels_safe(self.labels),
         }
 
     # @property
@@ -380,19 +530,77 @@ class Roi(abc.Mapping):
         Load `pl.LazyFrames` into memory. Use `Roi.compute()` to also load raster data.
         """
         return Roi(
-            data=self.data, 
-            tables={k: (v.collect() if isinstance(v, pl.LazyFrame) else v) for k, v in self.tables.items()},
+            data=self.data,
+            tables={
+                k: (v.collect() if isinstance(v, pl.LazyFrame) else v)
+                for k, v in self.tables.items()
+            },
+            models=self.models,
             name=self.name,
             paths=self.paths,
-            )
+        )
 
-    def compute(self) -> "Roi":
+    def compute(self, ill_corr_model: str | None = None) -> "Roi":
+        """
+        Load `Roi` into memory. In case of two-step models use 
+        `self._TWO_STEP_ILL_CORR_LABEL` as the foreground label image.
+
+        Parameters
+        ----------
+        ill_corr_model : str, optional
+            Apply an illumination correction model to channel stored under `Roi.models`.
+            If `None` no correction is applied.
+
+        Returns
+        -------
+        Roi
+            In memory `Roi` with illumination correction applied.
+
+        Raises
+        ------
+        ValueError
+            If the required `ill_corr_model` was not found.
+        """
+        if ill_corr_model is not None:
+            for channel in _get_channels_safe(self.images):
+                if channel not in self.models['z_decay'][ill_corr_model]:
+                    raise ValueError(f"Model `{ill_corr_model}` not found for channel `{channel}`.")
+                    
+        data = {}
+        for k, v in self.data.items():
+            if k == self._IMAGES_KEY and ill_corr_model is not None:
+                channels = []
+                if 'c' in list(self.data[k].coords.keys()) and 'c' not in self.data[k].dims:
+                    channel_images = list(self.data[k].expand_dims('c'))
+                else:
+                    channel_images = list(self.data[k])
+                for channel_image in channel_images:
+                    model = self.models["z_decay"][ill_corr_model][channel_image.c.item()]
+                    if len(model._feature_names) == 2:
+                        if 'l' not in self.dims:
+                            label_image = self.labels
+                            assert label_image.l.item() == self._TWO_STEP_ILL_CORR_LABEL, f"`{self._TWO_STEP_ILL_CORR_LABEL}` not found!"
+                        else:
+                            label_image = self.labels.sel(l=self._TWO_STEP_ILL_CORR_LABEL)
+                    else:
+                        label_image = None
+                    channels.append(apply_model_to_channel(model, channel_image, label_image))
+                if 'c' in list(self.data[k].coords.keys()) and 'c' not in self.data[k].dims:
+                    data[k] = xr.concat(channels, dim='c').compute().squeeze('c')
+                else:
+                    data[k] = xr.concat(channels, dim='c').compute()        
+            else:
+                data[k] = v.compute()
         return Roi(
-            data={k: v.compute() for k, v in self.data.items()}, 
-            tables={k: (v.collect() if isinstance(v, pl.LazyFrame) else v) for k, v in self.tables.items()},
+            data=data,
+            tables={
+                k: (v.collect() if isinstance(v, pl.LazyFrame) else v)
+                for k, v in self.tables.items()
+            },
+            models=self.models,
             name=self.name,
             paths=self.paths,
-            )
+        )
 
     def __str__(self) -> str:
         return pformat(self)
@@ -404,7 +612,7 @@ class Roi(abc.Mapping):
         from xarray.core.formatting import dim_summary
 
         rep = [
-            f"< {self.__class__.__name__} {self.name!r}   {'('+dim_summary(self)}) >"
+            f"< {self.__class__.__name__} {self.name!r}   ({dim_summary(self)}) >"
         ]
         if not collapse:
             rep.append(_coordinates_repr(self))
@@ -412,6 +620,55 @@ class Roi(abc.Mapping):
         # rep.append(coords_repr(self.labels.coords, col_width=6).split("\n")[1])
         # rep.extend(coords_repr(self.images.coords, col_width=6).split("\n")[1:])
         return "\n".join(rep)
+
+
+def apply_z_decay_models_to_roi(
+        models: Mapping[str, Model] | None,
+        roi: Roi,
+        two_step_label: str | None = None,
+        suffix: str = ''
+) -> Roi:
+        if models is None:
+            return roi
+        
+        data = {}
+        for k, v in roi.data.items():
+            if k == roi._IMAGES_KEY:
+                channels = []
+                if 'c' in list(roi.data[k].coords.keys()) and 'c' not in roi.data[k].dims:
+                    channel_images = list(roi.data[k].expand_dims('c'))
+                else:
+                    channel_images = list(roi.data[k])
+                for channel_image in channel_images:
+                    model = models[channel_image.c.item()]
+                    assert model._feature_names is not None, "Model not fit."
+                    if len(model._feature_names) == 2:
+                        if 'l' not in roi.dims:
+                            label_image = roi.labels
+                            assert label_image.l.item() == two_step_label, f"`{two_step_label}` not found!"
+                        else:
+                            label_image = roi.labels.sel(l=two_step_label)
+                    else:
+                        label_image = None
+                    channel_image_corr = apply_model_to_channel(model, channel_image, label_image)
+                    channel_image_corr.rename()
+                    channels.append(channel_image_corr)
+                if 'c' in list(roi.data[k].coords.keys()) and 'c' not in roi.data[k].dims:
+                    data[k] = xr.concat(channels, dim='c').squeeze('c')
+                else:
+                    data[k] = xr.concat(channels, dim='c')        
+            else:
+                data[k] = v
+        return Roi(
+            data=data,
+            tables={
+                k: (v.collect() if isinstance(v, pl.LazyFrame) else v)
+                for k, v in roi.tables.items()
+            },
+            models=roi.models,
+            name=roi.name,
+            paths=roi.paths,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,24 +753,35 @@ def _repr_roi_small(roi_meta: RoiMeta, indent=21, col_width=12, n_cols=4):
     )
 
 
-#TODO: .drop_dim, .drop_sel
+# TODO: .drop_dim, .drop_sel
 @dataclass
 class RoiMap(abc.Mapping):
     rois: Mapping[str, Roi] = field(default_factory=dict)
     name: str | None = field(default=None)
 
     @classmethod
-    def from_files(cls, fns: list[PathLike[str]], level: int, features_root: PathLike[str] | None = None) -> "RoiMap":
+    def from_files(
+        cls,
+        fns: list[PathLike[str]],
+        level: int,
+        features_root: PathLike[str] | None = None,
+    ) -> "RoiMap":
         rois = {}
         for fn in fns:
             fn = Path(fn)
-            roi = Roi.from_file(fn, level=level, features_root = None if features_root is None else Path(features_root) / fn.stem)
+            roi = Roi.from_file(
+                fn,
+                level=level,
+                features_root=None
+                if features_root is None
+                else Path(features_root) / fn.stem,
+            )
             rois[fn.stem] = roi
 
         name = (fn.parent / "*").as_posix()
         return RoiMap(rois=rois, name=name)
 
-    #TODO: fix and use this.
+    # TODO: fix and use this.
     def accumulate_site_info(self):
         aggs = {}
         for k in self:
@@ -537,24 +805,29 @@ class RoiMap(abc.Mapping):
 
     def isel(self, **kwargs) -> "RoiMap | Roi":
         if "roi" in kwargs:
-            roi_indices = kwargs.pop('roi')
+            roi_indices = kwargs.pop("roi")
             if isinstance(roi_indices, list):
                 roi_names = list(map(self._index_to_name, roi_indices))
             elif isinstance(roi_indices, slice | int):
                 roi_names = sorted(list(self.keys()))[roi_indices]
             else:
-                raise TypeError('Only `list[int]`, `slice` or `int` allowed.')
+                raise TypeError("Only `list[int]`, `slice` or `int` allowed.")
         else:
             roi_names = sorted(list(self.keys()))
-        
+
         if isinstance(roi_names, str):
             return self.__getitem__(roi_names).isel(**kwargs)
-        return RoiMap(rois={roi_name: self.__getitem__(roi_name).isel(**kwargs) for roi_name in roi_names}, name=self.name)
+        return RoiMap(
+            rois={
+                roi_name: self.__getitem__(roi_name).isel(**kwargs)
+                for roi_name in roi_names
+            },
+            name=self.name,
+        )
         #     RoiMap(rois=self.rois, name=self.name).sel(roi=roi_names).isel(**kwargs)
         #     return self.sel(roi=roi_names).isel(**kwargs)
         # else:
         #     return RoiMap()
-
 
     def sel(self, **kwargs) -> "RoiMap | Roi":
         if "roi" in kwargs:
@@ -585,13 +858,21 @@ class RoiMap(abc.Mapping):
     @property
     def sizes(self) -> dict[Hashable, int]:
         return {"roi": len(self), **self.first().sizes}
-    
-    def table(self, _objects: Sequence[str] | str | None = None, columns: Sequence[str] | str = '*') -> "pl.DataFrame":
+
+    def table(
+        self,
+        _objects: Sequence[str] | str | None = None,
+        columns: Sequence[str] | str = "*",
+    ) -> "pl.DataFrame":
         return pl.concat(
             [
-                roi.table(_objects=_objects, columns=columns).with_columns(pl.lit(name).alias('roi')) 
-                for name, roi in self.items() 
-                ], how='diagonal').select([pl.col(EXPERIMENT_INDEX), pl.exclude(EXPERIMENT_INDEX)])
+                roi.table(_objects=_objects, columns=columns).with_columns(
+                    pl.lit(name).alias("roi")
+                )
+                for name, roi in self.items()
+            ],
+            how="diagonal",
+        ).select([pl.col(EXPERIMENT_INDEX), pl.exclude(EXPERIMENT_INDEX)])
 
     def first(self) -> "Roi":
         try:
@@ -629,6 +910,7 @@ class RoiMap(abc.Mapping):
         for name, roi in self.items():
             rep.append(f"{roi.__repr__(collapse=True, indent=2)}")
         return "\n".join(rep)
+
 
 # %%
 # def check(rows):

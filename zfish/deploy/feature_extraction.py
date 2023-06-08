@@ -11,7 +11,7 @@ from zfish.features.polars_utils import join
 from zfish.roi.spatial_roi import Roi, apply_z_decay_models_to_roi, read_models
 
 # # %%
-# idx = 0
+# idx = 21
 # feature_extraction_parameters = r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\deploy\feature_extraction.yaml"
 
 # params = FeatureExtractionParams.parse_file(feature_extraction_parameters)
@@ -28,8 +28,17 @@ from zfish.roi.spatial_roi import Roi, apply_z_decay_models_to_roi, read_models
 #     c=list(site_params.features.resources.channels),
 # )
 # z_decay_models = read_models(params.intensity_correction.z_decay_models)
+
+# # Set model to None if no model is found for a channel.
+# if site_params.intensity_correction.z_decay_default_models is None:
+#     print(f"Uncorrected channels: {set(site_params.features.resources.channels).difference(z_decay_models.keys())}")
+#     z_decay_models = {
+#         **{k: None for k in site_params.features.resources.channels},
+#         **z_decay_models,
+#     }
+
 # lazy_roi_resources_corr = apply_z_decay_models_to_roi(
-#     models=z_decay_models, 
+#     models=z_decay_models,
 #     roi=lazy_roi_resources,
 #     two_step_label=params.intensity_correction.z_decay_two_step_label
 # )
@@ -44,6 +53,7 @@ from zfish.roi.spatial_roi import Roi, apply_z_decay_models_to_roi, read_models
 
 # viewer = imshow_roi(img)
 # viewer = imshow_roi(img_corr, viewer)
+
 
 # %%
 def main():
@@ -65,11 +75,21 @@ def main():
         l=list(site_params.features.resources.label_images),
         c=list(site_params.features.resources.channels),
     )
+
     z_decay_models = read_models(params.intensity_correction.z_decay_models)
+
+    # Set model to None if no model is found for a channel.
+    if site_params.intensity_correction.z_decay_default_models is None:
+        print(f"Uncorrected channels: {set(site_params.features.resources.channels).difference(z_decay_models.keys())}")
+        z_decay_models = {
+            **{k: None for k in site_params.features.resources.channels},
+            **z_decay_models,
+        }
+
     lazy_roi_resources_corr = apply_z_decay_models_to_roi(
-        models=z_decay_models, 
+        models=z_decay_models,
         roi=lazy_roi_resources,
-        two_step_label=params.intensity_correction.z_decay_two_step_label
+        two_step_label=params.intensity_correction.z_decay_two_step_label,
     )
 
     features = defaultdict(list)
@@ -94,8 +114,12 @@ def main():
             print("extracting correlation features...")
             for channel1, channel2 in site_params.features.correlation.channel_pairs:
                 print(f"channel pair: {(channel1, channel2)}")
-                channel_image1 = lazy_roi_resources_corr.sel(c=channel1).images.compute()
-                channel_image2 = lazy_roi_resources_corr.sel(c=channel2).images.compute()
+                channel_image1 = lazy_roi_resources_corr.sel(
+                    c=channel1
+                ).images.compute()
+                channel_image2 = lazy_roi_resources_corr.sel(
+                    c=channel2
+                ).images.compute()
                 features[label].append(
                     get_colocalization_features(
                         label_image, channel_image1, channel_image2
@@ -106,7 +130,9 @@ def main():
             print("extracting distance features...")
             for label_to, label_id in site_params.features.distance.label_objects:
                 print(f"label object: {(label_to, label_id)}")
-                label_image_to = lazy_roi_resources_corr.sel(l=label_to).labels.compute()
+                label_image_to = lazy_roi_resources_corr.sel(
+                    l=label_to
+                ).labels.compute()
                 features[label].append(
                     get_distance_features(label_image, label_image_to, label_id)
                 )

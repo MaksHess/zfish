@@ -9,8 +9,8 @@ SLURM_COMMAND = """#!/usr/bin/env bash
 #SBATCH --array=0-{0}%50
 #SBATCH --mem-per-cpu=10000m
 #SBATCH --cpus-per-task=2
-#SBATCH --error=logs/%A_%a.err
-#SBATCH --output=logs/%A_%a.out
+#SBATCH --error=log.err
+#SBATCH --output=log.out
 #SBATCH --time=3-00:00:00
 
 source ~/.bashrc

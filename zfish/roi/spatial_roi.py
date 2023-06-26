@@ -88,6 +88,30 @@ def load_roi_tables(
     return tables
 
 
+def load_roi_table(root_path: PathLike, id_column="object") -> "pl.DataFrame":
+    import polars as pl
+
+    tables = load_roi_tables(root_path)
+
+    return pl.concat(
+        [
+            table.with_columns(pl.lit(object_name).alias(id_column))
+            for object_name, table in tables.items()
+        ],
+        how='diagonal'
+    )
+
+def load_roi_map_table(root_path: PathLike, id_column="roi") -> "pl.DataFrame":
+    import polars as pl
+
+    tables = []
+
+    for roi_root in Path(root_path).glob('*'):
+        if roi_root.is_dir():
+            tables.append(load_roi_table(roi_root).with_columns(pl.lit(roi_root.name).alias(id_column)))
+    
+    return pl.concat(tables, how='diagonal')
+
 # def load_ill_corr_models(root_path: PathLike) -> dict[str, dict[str, dict[str, "Model"]]]:
 #     """
 #     Load illumination correction model from a directory with the following structure:
@@ -257,26 +281,29 @@ def _get_channels_safe(img: LabelImage | SpatialImage) -> set[str]:
     under the hood, explicitly converting to `str` in a comprehension does the trick.
     """
     if "l" in list(img.coords.keys()):
-        if 'l' in img.dims:
+        if "l" in img.dims:
             return set([str(e) for e in img.l.values])
         else:
             return set([str(img.l.item())])
-    elif 'c' in list(img.coords.keys()):
-        if 'c' in img.dims:
+    elif "c" in list(img.coords.keys()):
+        if "c" in img.dims:
             return set([str(e) for e in img.c.values])
         else:
             return set([str(img.c.item())])
     else:
         raise ValueError("No channel axis  ('l' or 'c') found!")
 
-    
-SEL_KWARGS = ('method', 'tolerance', 'drop')
+
+SEL_KWARGS = ("method", "tolerance", "drop")
+
 
 @dataclass
 class Roi(abc.Mapping):
     data: Mapping[str, Any] = field(default_factory=empty_data)
     tables: Mapping[str, Any] = field(default_factory=dict)
-    models: Mapping[str, Mapping[str, Mapping[str, Model]]] = field(default_factory=dict)
+    models: Mapping[str, Mapping[str, Mapping[str, Model]]] = field(
+        default_factory=dict
+    )
     paths: Mapping[str, Path] = field(default_factory=dict)
     name: str = field(default="")
     _LABELS_KEY: str = field(default="labels", repr=False)
@@ -322,8 +349,8 @@ class Roi(abc.Mapping):
         )
 
     def write_tables(
-        self, 
-        strategy: TableWriteStrategy = TableWriteStrategy.MERGE, 
+        self,
+        strategy: TableWriteStrategy = TableWriteStrategy.MERGE,
         root_path: Path | str | None = None,
     ) -> None:
         assert self._FEATURES_KEY in self.paths or root_path is not None
@@ -391,21 +418,39 @@ class Roi(abc.Mapping):
         for k, elem in self.data.items():
             valid_keys = set(kwargs.keys()).intersection(elem.dims + SEL_KWARGS)
             out[k] = elem.sel(**{k: kwargs[k] for k in valid_keys})
-        return Roi(data=out, tables=self.tables, models=self.models, name=self.name, paths=self.paths)
+        return Roi(
+            data=out,
+            tables=self.tables,
+            models=self.models,
+            name=self.name,
+            paths=self.paths,
+        )
 
     def isel(self, **kwargs) -> "Roi":
         out = dict()
         for k, elem in self.data.items():
             valid_keys = set(kwargs.keys()).intersection(elem.dims)
             out[k] = elem.isel(**{k: kwargs[k] for k in valid_keys})
-        return Roi(data=out, tables=self.tables, models=self.models, name=self.name, paths=self.paths)
+        return Roi(
+            data=out,
+            tables=self.tables,
+            models=self.models,
+            name=self.name,
+            paths=self.paths,
+        )
 
     def drop_sel(self, **kwargs) -> "Roi":
         out = dict()
         for k, elem in self.data.items():
             valid_keys = set(kwargs.keys()).intersection(elem.dims)
             out[k] = elem.drop_sel(**{k: kwargs[k] for k in valid_keys})
-        return Roi(data=out, tables=self.tables, models=self.models, name=self.name, paths=self.paths)
+        return Roi(
+            data=out,
+            tables=self.tables,
+            models=self.models,
+            name=self.name,
+            paths=self.paths,
+        )
 
     def drop_dim(self, dim: Literal["l", "c"]) -> "Roi":
         assert dim in ["l", "c"]
@@ -469,7 +514,7 @@ class Roi(abc.Mapping):
         self,
         _objects: Sequence[str] | str | None = None,
         columns: Sequence[str] | str = "*",
-    ) -> pl.DataFrame:     
+    ) -> pl.DataFrame:
         if _objects is None:
             tables = self.tables
         elif isinstance(_objects, str):
@@ -542,7 +587,7 @@ class Roi(abc.Mapping):
 
     def compute(self, ill_corr_model: str | None = None) -> "Roi":
         """
-        Load `Roi` into memory. In case of two-step models use 
+        Load `Roi` into memory. In case of two-step models use
         `self._TWO_STEP_ILL_CORR_LABEL` as the foreground label image.
 
         Parameters
@@ -563,32 +608,48 @@ class Roi(abc.Mapping):
         """
         if ill_corr_model is not None:
             for channel in _get_channels_safe(self.images):
-                if channel not in self.models['z_decay'][ill_corr_model]:
-                    raise ValueError(f"Model `{ill_corr_model}` not found for channel `{channel}`.")
-                    
+                if channel not in self.models["z_decay"][ill_corr_model]:
+                    raise ValueError(
+                        f"Model `{ill_corr_model}` not found for channel `{channel}`."
+                    )
+
         data = {}
         for k, v in self.data.items():
             if k == self._IMAGES_KEY and ill_corr_model is not None:
                 channels = []
-                if 'c' in list(self.data[k].coords.keys()) and 'c' not in self.data[k].dims:
-                    channel_images = list(self.data[k].expand_dims('c'))
+                if (
+                    "c" in list(self.data[k].coords.keys())
+                    and "c" not in self.data[k].dims
+                ):
+                    channel_images = list(self.data[k].expand_dims("c"))
                 else:
                     channel_images = list(self.data[k])
                 for channel_image in channel_images:
-                    model = self.models["z_decay"][ill_corr_model][channel_image.c.item()]
+                    model = self.models["z_decay"][ill_corr_model][
+                        channel_image.c.item()
+                    ]
                     if len(model._feature_names) == 2:
-                        if 'l' not in self.dims:
+                        if "l" not in self.dims:
                             label_image = self.labels
-                            assert label_image.l.item() == self._TWO_STEP_ILL_CORR_LABEL, f"`{self._TWO_STEP_ILL_CORR_LABEL}` not found!"
+                            assert (
+                                label_image.l.item() == self._TWO_STEP_ILL_CORR_LABEL
+                            ), f"`{self._TWO_STEP_ILL_CORR_LABEL}` not found!"
                         else:
-                            label_image = self.labels.sel(l=self._TWO_STEP_ILL_CORR_LABEL)
+                            label_image = self.labels.sel(
+                                l=self._TWO_STEP_ILL_CORR_LABEL
+                            )
                     else:
                         label_image = None
-                    channels.append(apply_model_to_channel(model, channel_image, label_image))
-                if 'c' in list(self.data[k].coords.keys()) and 'c' not in self.data[k].dims:
-                    data[k] = xr.concat(channels, dim='c').compute().squeeze('c')
+                    channels.append(
+                        apply_model_to_channel(model, channel_image, label_image)
+                    )
+                if (
+                    "c" in list(self.data[k].coords.keys())
+                    and "c" not in self.data[k].dims
+                ):
+                    data[k] = xr.concat(channels, dim="c").compute().squeeze("c")
                 else:
-                    data[k] = xr.concat(channels, dim='c').compute()        
+                    data[k] = xr.concat(channels, dim="c").compute()
             else:
                 data[k] = v.compute()
         return Roi(
@@ -611,9 +672,7 @@ class Roi(abc.Mapping):
     def __repr__(self, collapse=False, indent=0) -> str:
         from xarray.core.formatting import dim_summary
 
-        rep = [
-            f"< {self.__class__.__name__} {self.name!r}   ({dim_summary(self)}) >"
-        ]
+        rep = [f"< {self.__class__.__name__} {self.name!r}   ({dim_summary(self)}) >"]
         if not collapse:
             rep.append(_coordinates_repr(self))
         rep = map((lambda x: f"{' '*indent}{x}"), rep)
@@ -623,52 +682,58 @@ class Roi(abc.Mapping):
 
 
 def apply_z_decay_models_to_roi(
-        models: Mapping[str, Model] | None,
-        roi: Roi,
-        two_step_label: str | None = None,
-        suffix: str = ''
+    models: Mapping[str, Model | None] | None,
+    roi: Roi,
+    two_step_label: str | None = None,
+    suffix: str = "",
 ) -> Roi:
-        if models is None:
-            return roi
-        
-        data = {}
-        for k, v in roi.data.items():
-            if k == roi._IMAGES_KEY:
-                channels = []
-                if 'c' in list(roi.data[k].coords.keys()) and 'c' not in roi.data[k].dims:
-                    channel_images = list(roi.data[k].expand_dims('c'))
+    if models is None:
+        return roi
+
+    data = {}
+    for k, v in roi.data.items():
+        if k == roi._IMAGES_KEY:
+            channels = []
+            if "c" in list(roi.data[k].coords.keys()) and "c" not in roi.data[k].dims:
+                channel_images = list(roi.data[k].expand_dims("c"))
+            else:
+                channel_images = list(roi.data[k])
+            for channel_image in channel_images:
+                model = models[channel_image.c.item()]
+                if model is None:
+                    channel_image_corr = channel_image
                 else:
-                    channel_images = list(roi.data[k])
-                for channel_image in channel_images:
-                    model = models[channel_image.c.item()]
                     assert model._feature_names is not None, "Model not fit."
                     if len(model._feature_names) == 2:
-                        if 'l' not in roi.dims:
+                        if "l" not in roi.dims:
                             label_image = roi.labels
-                            assert label_image.l.item() == two_step_label, f"`{two_step_label}` not found!"
+                            assert (
+                                label_image.l.item() == two_step_label
+                            ), f"`{two_step_label}` not found!"
                         else:
                             label_image = roi.labels.sel(l=two_step_label)
                     else:
                         label_image = None
-                    channel_image_corr = apply_model_to_channel(model, channel_image, label_image)
-                    channel_image_corr.rename()
-                    channels.append(channel_image_corr)
-                if 'c' in list(roi.data[k].coords.keys()) and 'c' not in roi.data[k].dims:
-                    data[k] = xr.concat(channels, dim='c').squeeze('c')
-                else:
-                    data[k] = xr.concat(channels, dim='c')        
+                    channel_image_corr = apply_model_to_channel(
+                        model, channel_image, label_image
+                    )
+                channels.append(channel_image_corr)
+            if "c" in list(roi.data[k].coords.keys()) and "c" not in roi.data[k].dims:
+                data[k] = xr.concat(channels, dim="c").squeeze("c")
             else:
-                data[k] = v
-        return Roi(
-            data=data,
-            tables={
-                k: (v.collect() if isinstance(v, pl.LazyFrame) else v)
-                for k, v in roi.tables.items()
-            },
-            models=roi.models,
-            name=roi.name,
-            paths=roi.paths,
-        )
+                data[k] = xr.concat(channels, dim="c")
+        else:
+            data[k] = v
+    return Roi(
+        data=data,
+        tables={
+            k: (v.collect() if isinstance(v, pl.LazyFrame) else v)
+            for k, v in roi.tables.items()
+        },
+        models=roi.models,
+        name=roi.name,
+        paths=roi.paths,
+    )
 
 
 @dataclass(frozen=True, slots=True)

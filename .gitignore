@@ -1,3 +1,11 @@
+# Data files
+*.parquet
+*.csv
+*.pkl
+*.h5ad
+*.bkup
+data/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -1,9 +1,12 @@
 # Data files
 *.parquet
+*.png
+*.tif
 *.csv
 *.pkl
 *.h5ad
 *.bkup
+*.clf
 data/
 
 # Byte-compiled / optimized / DLL files

@@ -179,6 +179,8 @@ def read_models(root: Path | str):
     Read a nested file structure to a nested dict.
     """
     result = {}
+    if not Path(root).exists():
+        return result
     for item in os.listdir(root):
         item_path = os.path.join(root, item)
         if os.path.isdir(item_path):

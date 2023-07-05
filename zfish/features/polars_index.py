@@ -1,9 +1,13 @@
 # %%
+# TODO: Upgrade to polars 18.x (breaking changes .arr -> .list accessor)
 import polars as pl
+
+from zfish.roi._spatial_roi_config import SortKey
 
 INDEX_PATTERN = r"^_?(?P<index>[a-z0-9]+(?:_[a-z0-9]+)*)$"  # 'snake_case` and `nonumbers`, `_can_start` !lowercase
 ACTIVE_INDEX_PATTERN = r"^(?P<index>[a-z0-9]+(?:_[a-z0-9]+)*)$"
 INACTIVE_INDEX_PATTERN = r"^_(?P<index>[a-z0-9]+(?:_[a-z0-9]+)*)$"
+INDEX_ORDER = SortKey().idx
 
 from typing import Sequence
 
@@ -19,7 +23,6 @@ class IndexAccessor:
         self._df = df
         self._active_pattern = active_pattern
         self._inactive_pattern = inactive_pattern
-        print('done')
 
     @property
     def columns(self) -> list[str]:
@@ -28,6 +31,10 @@ class IndexAccessor:
     @property
     def columns_set(self) -> set[str]:
         return set(self.columns)
+    
+    @property
+    def not_columns(self) -> list[str]:
+        return self._df.lazy().select(pl.exclude(self.columns)).columns
     
     @property
     def active(self) -> list[str]:
@@ -54,7 +61,7 @@ class IndexAccessor:
         return self._df.join(other, on=self.intersection(other), how=how, **kwargs)
     
     def sort(self) -> pl.DataFrame:
-        return self._df.select(pl.col(self.active), pl.exclude(self.columns), pl.col(self.inactive))
+        return self._df.select(pl.col(sorted(self.active, key=INDEX_ORDER)), pl.exclude(self.columns), pl.col(self.inactive))
     
     def set_index(self, columns: str | Sequence[str]) -> pl.DataFrame:
         columns_inactive_name = [f'_{column}' if not column.startswith('_') else f'{column}' for column in columns]

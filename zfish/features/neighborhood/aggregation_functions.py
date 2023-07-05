@@ -4,6 +4,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 __all__ = [
+    "Id"
     "Mean",
     "Median",
     "Mode",
@@ -27,6 +28,10 @@ def quantile_factory(*qs: float):
             return np.quantile(arr, q)
         quantile.__name__ = f'Q{q:.2f}'
         yield(quantile)
+
+@nb.njit
+def Id(arr: NDArray) -> NDArray:
+    return arr
 
 @nb.njit
 def Mean(arr: NDArray) -> NDArray:

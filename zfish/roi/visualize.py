@@ -1,9 +1,15 @@
 # %%
 from itertools import cycle
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
 import napari
 from spatial_image import SpatialImage
+
+from zfish.features.polars_utils import unnest_all_structs
+
+if TYPE_CHECKING:
+    import pandas as pd
+    import polars as pl
 
 NAPARI_COMMON_DEFAULTS = {
     "visible": True,
@@ -27,7 +33,7 @@ NAPARI_IMAGE_DEFAULTS = {
     "opacity": 1,
     "colormap": "gray",
     "gamma": 1,
-    "interpolation": "nearest",
+    "interpolation2d": "nearest",
     "rendering": "mip",
     "iso_threshold": 0.5,
     "attenuation": 0.05,
@@ -44,11 +50,12 @@ NAPARI_LABEL_DEFAULTS = {
 }
 Range: TypeAlias = tuple[float, float]
 
+
 def imshow_map(
-        roi_map: "RoiMap",
-        viewer: napari.Viewer | None = None,
-        object: tuple[str, int] | None = None,
-        **kwargs,
+    roi_map: "RoiMap",
+    viewer: napari.Viewer | None = None,
+    object: tuple[str, int] | None = None,
+    **kwargs,
 ) -> napari.Viewer:
     if viewer is None:
         viewer = napari.Viewer()
@@ -56,26 +63,32 @@ def imshow_map(
         viewer = imshow_roi(roi, viewer=viewer, name=name)
     return viewer
 
+
 def imshow_roi(
     roi: "Roi",
     viewer: napari.Viewer | None = None,
     object: tuple[str, int] | None = None,
+    roi_name_as_prefix: bool = False,
     **kwargs,
 ) -> napari.Viewer:
     if viewer is None:
         viewer = napari.Viewer()
+    name_prefix = f"{roi.name}_" if roi_name_as_prefix else ''
+
     if "c" in roi.coords.keys():
         image_kwargs = {**NAPARI_IMAGE_DEFAULTS, **kwargs}
-        print(image_kwargs)
-        viewer = _show_image(roi.images, viewer=viewer, **image_kwargs)
+        viewer = _show_image(roi.images, viewer=viewer, name_prefix=name_prefix, **image_kwargs)
     if "l" in roi.coords.keys():
         label_kwargs = {**NAPARI_LABEL_DEFAULTS, **kwargs}
-        viewer = _show_label(roi.labels, viewer=viewer, **label_kwargs)
+        viewer = _show_label(roi.labels, tables=roi.tables, viewer=viewer, name_prefix=name_prefix, **label_kwargs)
     return viewer
 
 
 def _show_image(
-    images: SpatialImage, viewer: napari.Viewer | None = None, **kwargs
+    images: SpatialImage, 
+    viewer: napari.Viewer | None = None,
+    name_prefix: str = '',
+    **kwargs
 ) -> napari.Viewer:
     if viewer is None:
         viewer = napari.Viewer()
@@ -83,20 +96,27 @@ def _show_image(
         images = images.expand_dims("c")
     if "c" in images.dims:
         for ch in images.c:
-            channel = images.sel(c=ch)
-            kwargs["name"] = ch.item()
+            channel = images.sel(c=ch.item())
+            channel_kwargs = images.attrs.get('napari_channel_kwargs', {}).get(ch.item(), {})
+            kwargs["name"] = f"{name_prefix}{ch.item()}"
             kwargs["scale"] = channel.meta.scale
             kwargs["translate"] = channel.meta.translate
             viewer.add_image(
-                # channel, name=ch.item(), scale=channel.meta.scale, **kwargs
                 channel,
-                **kwargs,
+                **{
+                    **kwargs,
+                    **channel_kwargs,
+                }
             )
     return viewer
 
 
 def _show_label(
-    labels: SpatialImage, viewer: napari.Viewer | None = None, **kwargs
+    labels: SpatialImage,
+    viewer: napari.Viewer | None = None,
+    tables: dict[str, "pl.DataFrame"] | None = None,
+    name_prefix: str = '',
+    **kwargs,
 ) -> napari.Viewer:
     if viewer is None:
         viewer = napari.Viewer()
@@ -105,9 +125,10 @@ def _show_label(
     if "l" in labels.dims:
         for ch in labels.l:
             channel = labels.sel(l=ch)
-            kwargs["name"] = ch.item()
+            kwargs["name"] = f"{name_prefix}{ch.item()}"
             kwargs["scale"] = channel.meta.scale
             kwargs["translate"] = channel.meta.translate
+            if tables is not None and ch.item() in tables:
+                kwargs["features"] = tables[ch.item()].pipe(unnest_all_structs).clone().to_pandas()
             viewer.add_labels(channel, **kwargs)
     return viewer
-

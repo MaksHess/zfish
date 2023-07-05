@@ -1,6 +1,7 @@
 # %%
+# TODO: Upgrade to polars 18.x (breaking changes .arr -> .list accessor)
 from collections import defaultdict
-from typing import Sequence
+from typing import Literal, Sequence
 
 import colorcet as cc
 import polars as pl
@@ -85,8 +86,17 @@ def debug(df: pl.DataFrame, message: str = "", debug=DEBUG) -> pl.DataFrame:
         print()
     return df
 
-def drop_null_columns(df: pl.DataFrame) -> pl.DataFrame:
-    col_is_all_null = df.select(pl.col("*").is_null().all().is_not()).row(0)
+def drop_null_columns(df: pl.DataFrame, strategy: Literal['any', 'all'] = 'all', include_nan=True) -> pl.DataFrame:
+    if include_nan:
+        if strategy == 'all':
+            col_is_all_null = df.select(pl.col("*").fill_nan(None).is_null().all().is_not()).row(0)
+        elif strategy == 'any':
+            col_is_all_null = df.select(pl.col("*").fill_nan(None).is_null().any().is_not()).row(0)
+    else:
+        if strategy == 'all':
+            col_is_all_null = df.select(pl.col("*").is_null().all().is_not()).row(0)
+        elif strategy == 'any':
+            col_is_all_null = df.select(pl.col("*").is_null().any().is_not()).row(0)
     return df.select(pl.col([c for c, filt in zip(df.columns, col_is_all_null) if filt==True]))
 
 
@@ -220,10 +230,10 @@ def get_metadata(
         .with_columns(pl.col("roi").cast(pl.Utf8).str.split("_").alias("parts"))
         .with_columns(
             [
-                pl.col("parts").arr.first().cast(pl.Categorical).alias("well"),
+                pl.col("parts").list.first().cast(pl.Categorical).alias("well"),
                 pl.col("parts")
-                .arr.slice(1)
-                .arr.join("_")
+                .list.slice(1)
+                .list.join("_")
                 .cast(pl.Categorical)
                 .alias("site"),
             ]

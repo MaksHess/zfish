@@ -1,10 +1,14 @@
 """
 Functions to aggregate feature tables across neighborhoods represented by adjacency matrices and unsing custom aggregation functions.
 """
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import numba as nb
 import numpy as np
+import polars as pl
+
+if TYPE_CHECKING:
+    from scipy import sparse
 
 
 def aggregate_table_nan(
@@ -18,7 +22,6 @@ def aggregate_table_nan(
             * np.expand_dims(feature_table, axis=0)
         ),
     )
-
 
 @nb.jit(parallel=True, cache=False)
 def aggregate_column_dense_parallel(
@@ -55,3 +58,104 @@ def aggregate_table_dense_parallel(
             aggregation_function=aggregation_function,
         )
     return neighborhood_features
+
+
+@nb.jit(parallel=True, cache=False)
+def aggregate_weighted_column_dense_parallel(
+    weight_matrix: np.ndarray,
+    feature_column: np.ndarray,
+    aggregation_function: Callable,
+) -> np.ndarray:
+    """
+    Non-edges need to be np.nan!
+    """
+    neighborhood_features = np.zeros_like(feature_column)
+    for observation_index in nb.prange(weight_matrix.shape[0]):
+        adjacency_array = weight_matrix[observation_index, :]
+        adjacency_mask = ~np.isnan(adjacency_array)
+
+        adjacent_features = np.atleast_2d(feature_column[adjacency_mask]*adjacency_array[adjacency_mask])
+        neighborhood_features[observation_index] = aggregation_function(
+            adjacent_features
+        )
+    return neighborhood_features
+
+@nb.njit(parallel=True)
+def aggregate_weighted_table_dense_parallel(
+    weight_matrix: np.ndarray,
+    feature_array: np.ndarray,
+    aggregation_function: Callable,
+) -> np.ndarray:
+    """
+    Non-edges need to be np.nan!
+    """
+    neighborhood_features = np.zeros_like(feature_array)
+    for var_index in nb.prange(feature_array.shape[1]):
+        feature_column = feature_array[:, var_index]
+        neighborhood_features[:, var_index] = aggregate_column_dense_parallel(
+            adjacency_matrix=weight_matrix,
+            feature_column=feature_column,
+            aggregation_function=aggregation_function,
+        )
+    return neighborhood_features
+
+# %% Slower for my kind of data (<10_000 objects)
+def aggregate_column_csr(
+    adjacency_csr: "sparse.csr_array",
+    feature_column: np.ndarray | pl.Series,
+    aggregation_function: pl.Expr = pl.col('feature').mean().prefix('Mean_'),
+    weighted: bool = False,
+    maintain_order: bool = True,
+    return_index: bool = False,
+):
+    coo_array = adjacency_csr.tocoo(copy=False)
+    if weighted:
+        res = (
+            pl.LazyFrame([pl.Series('focal', coo_array.row, dtype=pl.UInt32), pl.Series('neighbor', coo_array.col, dtype=pl.UInt32), pl.Series('weight', coo_array.data)])
+            .join(pl.Series('feature', feature_column).to_frame().with_row_count().lazy(), left_on='neighbor', right_on='row_nr')
+            .with_columns(pl.col('feature') * pl.col('weight'))            
+            .groupby('focal', maintain_order=maintain_order).agg(aggregation_function)
+        )
+    else:
+        res = (
+            pl.LazyFrame([pl.Series('focal', coo_array.row, dtype=pl.UInt32), pl.Series('neighbor', coo_array.col, dtype=pl.UInt32)])
+            .join(pl.Series('feature', feature_column).to_frame().with_row_count().lazy(), left_on='neighbor', right_on='row_nr')
+            .with_columns(pl.col('feature'))            
+            .groupby('focal', maintain_order=maintain_order).agg(aggregation_function)
+            # .sort(by='focal')
+            # .select(pl.exclude('focal'))
+        )
+    if return_index:
+        return res.collect()
+    else:
+        return res.select(pl.exclude('focal')).collect()
+    
+def aggregate_table_csr(
+    adjacency_csr: "sparse.csr_array",
+    feature_array: np.ndarray | pl.DataFrame,
+    aggregation_function: pl.Expr = pl.all().mean().prefix('Mean_'),
+    weighted: bool = False,
+    maintain_order: bool = True,
+    return_index: bool = False,
+):
+    coo_array = adjacency_csr.tocoo(copy=False)
+    if weighted:
+        res = (
+            pl.LazyFrame([pl.Series('focal', coo_array.row, dtype=pl.UInt32), pl.Series('neighbor', coo_array.col, dtype=pl.UInt32), pl.Series('weight', coo_array.data)])
+            .join(pl.DataFrame(np.asarray(feature_array)).with_row_count().lazy(), left_on='neighbor', right_on='row_nr')
+            .select(pl.col('focal'), pl.exclude(['focal', 'neighbor', 'weight']) * pl.col('weight'))
+            .groupby('focal', maintain_order=maintain_order).agg(aggregation_function)
+        )
+    else:
+        res = (
+            pl.LazyFrame([pl.Series('focal', coo_array.row, dtype=pl.UInt32), pl.Series('neighbor', coo_array.col, dtype=pl.UInt32)])
+            .join(pl.DataFrame(np.asarray(feature_array)).with_row_count().lazy(), left_on='neighbor', right_on='row_nr')
+            .select(pl.col('focal'), pl.exclude(['focal', 'neighbor', 'weight']))            
+            .groupby('focal', maintain_order=maintain_order).agg(aggregation_function)
+            # .sort(by='focal')
+            # .select(pl.exclude('focal'))
+        )
+    if return_index:
+        return res.collect()
+    else:
+        return res.select(pl.exclude('focal')).collect()

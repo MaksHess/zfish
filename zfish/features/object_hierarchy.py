@@ -145,7 +145,7 @@ if __name__ == "__main__":
     # %%
     f.filter(pl.col("cyto") != 0)
 
-    from zfish.visualize.centroids_and_principal_axes import (
+    from zfish.visualize.napari import (
         napari_centroids,
         napari_principal_axes,
     )

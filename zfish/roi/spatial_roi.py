@@ -18,6 +18,7 @@ from typing import (
     Sequence,
     TypeAlias,
 )
+from weakref import ProxyType, proxy
 
 import h5py
 import numpy as np
@@ -45,32 +46,56 @@ ROI_INDEX = ("object", "label")
 OBJECT_INDEX = ("label",)
 
 
+# def _load_roi(
+#     root_path: PathLike,
+#     attrs_select: dict[str, str | int | tuple[str | int, ...]],
+# ) -> list[SpatialImage]:
+#     f = h5py.File(root_path)
+#     dsets = [to_si(dset) for dset in h5.select(f, attrs_select)]
+#     return dsets
+#     # return xr.concat(dsets, dim="c", combine_attrs="drop")
+
+
+# def load_channels(root_path: PathLike, level: int | None = None) -> SpatialImage:
+#     f = h5py.File(root_path)
+#     attrs_select = {"img_type": "intensity"}
+#     if level is None:
+#         level = sorted(h5.attrs_set(f, "level", attrs_select=attrs_select))[0]
+#     attrs_select = {**attrs_select, **{"level": level}}
+#     return xr.concat(_load_roi(root_path=root_path, attrs_select=attrs_select), dim="c")
+
+
+# def load_labels(root_path: PathLike, level: int | None = None) -> LabelImage:
+#     f = h5py.File(root_path)
+#     attrs_select = {"img_type": "label"}
+#     if level is None:
+#         level = sorted(h5.attrs_set(f, "level", attrs_select=attrs_select))[0]
+#     attrs_select = {**attrs_select, **{"level": level}}
+#     return xr.concat(_load_roi(root_path=root_path, attrs_select=attrs_select), dim="c")
+
 def _load_roi(
-    root_path: PathLike,
+    f: h5py.File,
     attrs_select: dict[str, str | int | tuple[str | int, ...]],
 ) -> list[SpatialImage]:
-    f = h5py.File(root_path)
     dsets = [to_si(dset) for dset in h5.select(f, attrs_select)]
     return dsets
     # return xr.concat(dsets, dim="c", combine_attrs="drop")
 
 
-def load_channels(root_path: PathLike, level: int | None = None) -> SpatialImage:
-    f = h5py.File(root_path)
+def load_channels(f: h5py.File, level: int | None = None) -> SpatialImage:
     attrs_select = {"img_type": "intensity"}
     if level is None:
         level = sorted(h5.attrs_set(f, "level", attrs_select=attrs_select))[0]
     attrs_select = {**attrs_select, **{"level": level}}
-    return xr.concat(_load_roi(root_path=root_path, attrs_select=attrs_select), dim="c")
+    return xr.concat(_load_roi(f=f, attrs_select=attrs_select), dim="c")
 
 
-def load_labels(root_path: PathLike, level: int | None = None) -> LabelImage:
-    f = h5py.File(root_path)
+def load_labels(f: h5py.File, level: int | None = None) -> LabelImage:
     attrs_select = {"img_type": "label"}
     if level is None:
         level = sorted(h5.attrs_set(f, "level", attrs_select=attrs_select))[0]
     attrs_select = {**attrs_select, **{"level": level}}
-    return xr.concat(_load_roi(root_path=root_path, attrs_select=attrs_select), dim="c")
+    return xr.concat(_load_roi(f=f, attrs_select=attrs_select), dim="c")
 
 
 def load_roi_tables(
@@ -299,21 +324,45 @@ def _get_channels_safe(img: LabelImage | SpatialImage) -> set[str]:
 SEL_KWARGS = ("method", "tolerance", "drop")
 
 
-@dataclass
+
+
 class Roi(abc.Mapping):
-    data: Mapping[str, Any] = field(default_factory=empty_data)
-    tables: Mapping[str, Any] = field(default_factory=dict)
-    models: Mapping[str, Mapping[str, Mapping[str, Model]]] = field(
-        default_factory=dict
-    )
-    paths: Mapping[str, Path] = field(default_factory=dict)
-    name: str = field(default="")
-    _LABELS_KEY: str = field(default="labels", repr=False)
-    _IMAGES_KEY: str = field(default="images", repr=False)
-    _FEATURES_KEY: str = field(default="features", repr=False)
-    _ILL_CORR_KEY: str = field(default="models", repr=False)
-    _TABLES_IDX: tuple[str, ...] | str = field(default="label", repr=False)
-    _TWO_STEP_ILL_CORR_LABEL: str | None = field(default="embryoRaw", repr=False)
+    _f: list[h5py.File] = []
+    _LABELS_KEY: str = "labels"
+    _IMAGES_KEY: str = "images"
+    _FEATURES_KEY: str = "features"
+    _ILL_CORR_KEY: str = "models"
+    _TABLES_IDX: tuple[str, ...] | str = "label"
+    _TWO_STEP_ILL_CORR_LABEL: str | None = "embryoRaw"
+
+    def __init__(
+            self,
+            _fp: ProxyType,
+            data: Mapping[str, Any] | None = None,
+            tables: Mapping[str, Any] | None = None,
+            models: Mapping[str, Mapping[str, Mapping[str, Model]]] | None = None,
+            paths: Mapping[str, Path] | None = None,
+            name: str = ""
+            ):
+        self._fp = _fp
+        if data is None:
+            self.data = empty_data()
+        else:
+            self.data = data
+        if tables is None:
+            self.tables = dict()
+        else:
+            self.tables = tables
+        if models is None:
+            self.models = dict()
+        else:
+            self.models = models
+        if paths is None:
+            self.paths = dict()
+        else:
+            self.paths = paths
+        self.name = name
+        
 
     @classmethod
     def from_file(
@@ -337,18 +386,32 @@ class Roi(abc.Mapping):
         }
         tables = load_roi_tables(features_root, lazy=lazy_tables)
         models = read_models(Path(ill_corr_root))
+        cls._f.append(h5py.File(root))
+        _fp = proxy(cls._f[-1])
+        labels = load_labels(_fp, level=level)
+        channels = load_channels(_fp, level=level)
+
 
         print(f"loading {name}...")
         return Roi(
+            _fp=_fp,
             data={
-                cls._LABELS_KEY: load_labels(root, level=level).rename({"c": "l"}),
-                cls._IMAGES_KEY: load_channels(root, level=level),
+                cls._LABELS_KEY: labels.rename({"c": "l"}),
+                cls._IMAGES_KEY: channels,
             },
             tables=tables,
             models=models,
             paths=paths,
             name=name,
         )
+    
+    @classmethod
+    def close_all_files(
+        cls
+    ):
+        for f in cls._f:
+            f.close()
+        cls._f.clear()
 
     def write_tables(
         self,
@@ -403,6 +466,7 @@ class Roi(abc.Mapping):
                     if not attr.startswith("_")
                 },
                 "name": name,
+                "_f": proxy(self._f) if isinstance(self._f, h5py.File) else self._f
             }
         )
 
@@ -421,6 +485,7 @@ class Roi(abc.Mapping):
             valid_keys = set(kwargs.keys()).intersection(elem.dims + SEL_KWARGS)
             out[k] = elem.sel(**{k: kwargs[k] for k in valid_keys})
         return Roi(
+            _fp=self._fp,
             data=out,
             tables=self.tables,
             models=self.models,
@@ -434,6 +499,7 @@ class Roi(abc.Mapping):
             valid_keys = set(kwargs.keys()).intersection(elem.dims)
             out[k] = elem.isel(**{k: kwargs[k] for k in valid_keys})
         return Roi(
+            _fp=self._fp,
             data=out,
             tables=self.tables,
             models=self.models,
@@ -447,6 +513,7 @@ class Roi(abc.Mapping):
             valid_keys = set(kwargs.keys()).intersection(elem.dims)
             out[k] = elem.drop_sel(**{k: kwargs[k] for k in valid_keys})
         return Roi(
+            _fp=self._fp,
             data=out,
             tables=self.tables,
             models=self.models,
@@ -458,6 +525,7 @@ class Roi(abc.Mapping):
         assert dim in ["l", "c"]
         if dim == "l":
             return Roi(
+            _fp=self._fp,
                 data={
                     self._LABELS_KEY: empty_data()[self._LABELS_KEY],
                     self._IMAGES_KEY: self[self._IMAGES_KEY],
@@ -469,6 +537,7 @@ class Roi(abc.Mapping):
             )
         else:
             return Roi(
+            _fp=self._fp,
                 data={
                     self._LABELS_KEY: self[self._LABELS_KEY],
                     self._IMAGES_KEY: empty_data()[self._IMAGES_KEY],
@@ -481,6 +550,7 @@ class Roi(abc.Mapping):
 
     def map(self, func: Callable[[SpatialImage], SpatialImage], **kwargs) -> "Roi":
         return Roi(
+            _fp=self._fp,
             data={k: func(v, **kwargs) for k, v in self.data.items()},
             tables=self.tables,
             models=self.models,
@@ -577,6 +647,7 @@ class Roi(abc.Mapping):
         Load `pl.LazyFrames` into memory. Use `Roi.compute()` to also load raster data.
         """
         return Roi(
+            _fp=self._fp,
             data=self.data,
             tables={
                 k: (v.collect() if isinstance(v, pl.LazyFrame) else v)
@@ -655,6 +726,7 @@ class Roi(abc.Mapping):
             else:
                 data[k] = v.compute()
         return Roi(
+            _fp=self._fp,
             data=data,
             tables={
                 k: (v.collect() if isinstance(v, pl.LazyFrame) else v)
@@ -1417,11 +1489,3 @@ class RoiMap(abc.Mapping):
 
 # #     def __len__(self) -> int:
 # #         return len(self.rois)
-
-
-# # %%
-
-
-# # %%
-
-# %%

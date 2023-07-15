@@ -199,11 +199,13 @@ def write_models(models, root: Path | str):
             value.save(directory=current_path, file_name="model", mode="wb")
 
 
-def read_models(root: Path | str):
+def read_models(root: Path | str | None):
     """
     Read a nested file structure to a nested dict.
     """
     result = {}
+    if root is None:
+        return result
     if not Path(root).exists():
         return result
     for item in os.listdir(root):

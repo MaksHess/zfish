@@ -339,7 +339,7 @@ class Roi(abc.Mapping):
 
     def __init__(
             self,
-            _fp: ProxyType,
+            _fp: ProxyType | None = None,
             data: Mapping[str, Any] | None = None,
             tables: Mapping[str, Any] | None = None,
             models: Mapping[str, Mapping[str, Mapping[str, Model]]] | None = None,
@@ -462,13 +462,9 @@ class Roi(abc.Mapping):
     def rename(self, name: str) -> "Roi":
         return Roi(
             **{
-                **{
-                    attr: getattr(self, attr)
-                    for attr in self.__dataclass_fields__
-                    if not attr.startswith("_")
-                },
+                **self.__dict__,
                 "name": name,
-                "_f": proxy(self._f) if isinstance(self._f, h5py.File) else self._f
+                "_fp": proxy(self._fp) if isinstance(self._fp, h5py.File) else self._fp,
             }
         )
 
@@ -801,6 +797,7 @@ def apply_z_decay_models_to_roi(
         else:
             data[k] = v
     return Roi(
+        _fp=roi._fp,
         data=data,
         tables={
             k: (v.collect() if isinstance(v, pl.LazyFrame) else v)
@@ -993,7 +990,7 @@ class RoiMap(abc.Mapping):
 
     # TODO: Aggregate those from all rois, not just first.
     @property
-    def dims(self) -> tuple[str]:
+    def dims(self) -> tuple[str, ...]:
         return ("roi", *self.first().dims)
 
     @property

@@ -256,8 +256,8 @@ class Features(BaseModel):
 
 
 class IntensityCorrection(BaseModel):
-    t_decay_models: Path
-    z_decay_models: Path
+    t_decay_models: Path | None
+    z_decay_models: Path | None
     z_decay_two_step_label: str | None = None
     z_decay_add_model_name_to_feature_path: bool = False
     z_decay_default_models: Path | None = None
@@ -300,7 +300,11 @@ class FeatureExtractionParams(YamlModel):
     def _resolve_output_path(cls, v, values):
         if v is None:
             if values["intensity_correction"].z_decay_add_model_name_to_feature_path:
-                return values["root"] / values['output_dir'] / values['intensity_correction'].z_decay_models.name
+                if values['intensity_correction'].z_decay_models is None:
+                    name = 'NoCorrection'
+                else:
+                    name = values['intensity_correction'].z_decay_models.name
+                return values["root"] / values['output_dir'] / name
             else:
                 return values["root"] / values["output_dir"]
         else:

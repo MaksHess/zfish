@@ -80,7 +80,9 @@ def main():
 
     # Set model to None if no model is found for a channel.
     if site_params.intensity_correction.z_decay_default_models is None:
-        print(f"Uncorrected channels: {set(site_params.features.resources.channels).difference(z_decay_models.keys())}")
+        print(
+            f"Uncorrected channels: {set(site_params.features.resources.channels).difference(z_decay_models.keys())}"
+        )
         z_decay_models = {
             **{k: None for k in site_params.features.resources.channels},
             **z_decay_models,

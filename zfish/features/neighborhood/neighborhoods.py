@@ -444,7 +444,7 @@ def get_delaunay_adjacency(
 # TODO: implement
 def get_touch_adjacency(label_image: SpatialImage, absolute_surface=True):
     touch_matrix = weighted_anisotropic_touch_matrix(
-        label_image.to_numpy().astype(int), *label_image.meta.scale
+        label_image.to_numpy().astype('int32'), *label_image.meta.scale
     )
     np.fill_diagonal(touch_matrix, 0)
     labels = np.unique(label_image)[1:]

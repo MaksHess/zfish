@@ -75,10 +75,12 @@ def _parse_pairwise_star_expression(
 def _validate_resources_in_roi(resources: Resources, roi: "Roi") -> None:
     for channel in resources.channels:
         assert (
-            channel in roi.resources['channels']
+            channel in roi.resources["channels"]
         ), f"Channel `{channel}` not found in `{roi.resources['channels']}`!"
     for label in resources.label_images:
-        assert label in roi.resources['label_images'], f"Label `{label}` not found in `{roi.resources['label_images']}!"
+        assert (
+            label in roi.resources["label_images"]
+        ), f"Label `{label}` not found in `{roi.resources['label_images']}!"
 
 
 # @dataclass
@@ -169,7 +171,9 @@ class LabelFeature(BaseModel):
         return Resources(label_images=self.labels)
 
     def parse_star_expression(self, roi: Roi) -> "LabelFeature":
-        return LabelFeature(labels=_parse_star_expression(self.labels, roi.resources['label_images']))
+        return LabelFeature(
+            labels=_parse_star_expression(self.labels, roi.resources["label_images"])
+        )
 
 
 class IntensityFeature(BaseModel):
@@ -182,8 +186,8 @@ class IntensityFeature(BaseModel):
 
     def parse_star_expression(self, roi: Roi) -> "IntensityFeature":
         return IntensityFeature(
-            labels=_parse_star_expression(self.labels, roi.resources['label_images']),
-            channels=_parse_star_expression(self.channels, roi.resources['channels']),
+            labels=_parse_star_expression(self.labels, roi.resources["label_images"]),
+            channels=_parse_star_expression(self.channels, roi.resources["channels"]),
         )
 
 
@@ -198,7 +202,7 @@ class DistanceFeature(BaseModel):
 
     def parse_star_expression(self, roi: Roi) -> "DistanceFeature":
         return DistanceFeature(
-            labels=_parse_star_expression(self.labels, roi.resources['label_images']),
+            labels=_parse_star_expression(self.labels, roi.resources["label_images"]),
             label_objects=self.label_objects,
         )
 
@@ -216,22 +220,39 @@ class CorrelationFeature(BaseModel):
 
     def parse_star_expression(self, roi: Roi) -> "CorrelationFeature":
         return CorrelationFeature(
-            labels=_parse_star_expression(self.labels, roi.resources['label_images']),
+            labels=_parse_star_expression(self.labels, roi.resources["label_images"]),
             channel_pairs=_parse_pairwise_star_expression(
-                self.channel_pairs, roi.resources['channels']
+                self.channel_pairs, roi.resources["channels"]
             ),
         )
 
-
+# TODO: Use `delaunay_threshold`
 class DensityFeature(BaseModel):
     labels: set[str]
-    
+    delaunay_mask: str | None
+    delaunay_threshold: float | None
+
+    @property
+    def resources(self) -> Resources:
+        return Resources(
+            label_images=self.labels.union(
+                [] if self.delaunay_mask is None else [self.delaunay_mask]
+            )
+        )
+
+    def parse_star_expression(self, roi: Roi) -> "DensityFeature":
+        return DensityFeature(
+            labels=_parse_star_expression(self.labels, roi.resources["label_images"]),
+            delaunay_mask=self.delaunay_mask,
+        )
+
 
 class Features(BaseModel):
     label: LabelFeature
     intensity: IntensityFeature
     distance: DistanceFeature
     correlation: CorrelationFeature
+    density: DensityFeature
 
     def parse_star_expressions(self, roi: Roi) -> "Features":
         return Features(
@@ -239,6 +260,7 @@ class Features(BaseModel):
             intensity=self.intensity.parse_star_expression(roi),
             distance=self.distance.parse_star_expression(roi),
             correlation=self.correlation.parse_star_expression(roi),
+            density=self.density.parse_star_expression(roi),
         )
 
     @property
@@ -246,7 +268,13 @@ class Features(BaseModel):
         return Resources().union(
             *[
                 e.resources
-                for e in (self.label, self.intensity, self.distance, self.correlation)
+                for e in (
+                    self.label,
+                    self.intensity,
+                    self.distance,
+                    self.correlation,
+                    self.density,
+                )
             ]
         )
 
@@ -300,11 +328,11 @@ class FeatureExtractionParams(YamlModel):
     def _resolve_output_path(cls, v, values):
         if v is None:
             if values["intensity_correction"].z_decay_add_model_name_to_feature_path:
-                if values['intensity_correction'].z_decay_models is None:
-                    name = 'NoCorrection'
+                if values["intensity_correction"].z_decay_models is None:
+                    name = "NoCorrection"
                 else:
-                    name = values['intensity_correction'].z_decay_models.name
-                return values["root"] / values['output_dir'] / name
+                    name = values["intensity_correction"].z_decay_models.name
+                return values["root"] / values["output_dir"] / name
             else:
                 return values["root"] / values["output_dir"]
         else:

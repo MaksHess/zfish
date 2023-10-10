@@ -7,6 +7,7 @@ from zfish.features.distance import get_distance_features
 from zfish.features.feature_extraction_parameters import FeatureExtractionParams
 from zfish.features.intensity import get_intensity_features
 from zfish.features.label import get_label_features
+from zfish.features.neighborhood.density import get_density_features
 from zfish.features.polars_utils import join
 from zfish.roi.spatial_roi import Roi, apply_z_decay_models_to_roi, read_models
 
@@ -138,6 +139,15 @@ def main():
                 features[label].append(
                     get_distance_features(label_image, label_image_to, label_id)
                 )
+                
+        if label in site_params.features.density.labels:
+            delaunay_mask_label = site_params.features.density.delaunay_mask
+            if delaunay_mask_label is not None:
+                delaunay_mask_image = lazy_roi_resources_corr.sel(l=delaunay_mask_label).labels.compute()
+            else:
+                delaunay_mask_image = None
+            print("extracting density features...")
+            features[label].append(get_density_features(label_image, delaunay_mask_image))
         print()
 
     tables = {k: join(v, on="label") for k, v in features.items()}

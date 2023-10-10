@@ -1,7 +1,5 @@
 #!python
 #cython: language_level=3
-#distutils: extra_compile_args=-fopenmp
-#distutils: extra_link_args=-fopenmp
 
 import numpy as np
 cimport cython

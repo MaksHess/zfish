@@ -32,7 +32,7 @@ CLEAN_SHAPE_FEATURES = {
     "Elongation",
     "Flatness",
     "Roundness",
-    # "FeretDiameter",
+    "FeretDiameter",
     "Perimeter",
     "PerimeterOnBorderRatio",
     "EquivalentSphericalRadius",

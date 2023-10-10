@@ -54,7 +54,7 @@ features:
     labels:
     - "nucleiRaw3"
     - "cells"
-    delaunay_mask: "embryoRaw
+    delaunay_mask: "embryoRaw"
 
 
 intensity_correction:

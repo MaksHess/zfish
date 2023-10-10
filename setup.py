@@ -2,6 +2,7 @@
 
 """The setup script."""
 
+from Cython.Build import cythonize
 from setuptools import find_packages, setup
 
 with open("README.rst") as readme_file:
@@ -11,6 +12,7 @@ with open("HISTORY.rst") as history_file:
     history = history_file.read()
 
 requirements = [
+    "Cython",
     "h5py",
     "itk",
     "numpy",
@@ -28,6 +30,11 @@ requirements = [
     "imageio",
     "zarr",
     "scikit-learn",
+    "colorcet",
+    "pyarrow",
+    "pingouin",
+    "numba",
+    "python-forge",
 ]
 
 test_requirements = []
@@ -53,6 +60,7 @@ setup(
         ],
     },
     install_requires=requirements,
+    ext_modules=cythonize("zfish/features/neighborhood/neighborhood_matrix_parallel.pyx"),
     license="MIT license",
     long_description=readme + "\n\n" + history,
     include_package_data=True,

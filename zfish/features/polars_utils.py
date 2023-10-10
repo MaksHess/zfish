@@ -1,5 +1,4 @@
 # %%
-# TODO: Upgrade to polars 18.x (breaking changes .arr -> .list accessor)
 from collections import defaultdict
 from typing import Literal, Sequence
 
@@ -8,6 +7,15 @@ import polars as pl
 import seaborn as sns
 from polars.type_aliases import JoinStrategy
 from toolz.dicttoolz import valmap
+
+from zfish.features.polars_selector import sel
+
+POLARS_CONFIG_FILE = r'C:\Users\hessm\Documents\Programming\Python\zfish\zfish\features\polars.json'
+try:
+    pl.Config.load(POLARS_CONFIG_FILE)
+except ValueError:
+    import warnings
+    warnings.warn(f'polars config file not found in {POLARS_CONFIG_FILE}')
 
 FULL_INDEX_COLUMNS = ["roi", "object", "label", "channel", "stain", "acqusition"]
 CAT_DTYPE_COLUMNS = ["roi", "object", "channel", "stain"]
@@ -86,12 +94,34 @@ def debug(df: pl.DataFrame, message: str = "", debug=DEBUG) -> pl.DataFrame:
         print()
     return df
 
+def lower_upper_iqr(series, q_lower=0.25, q_upper=0.75):
+    ql = series.quantile(q_lower)
+    qu = series.quantile(q_upper)
+    iqr = qu - ql
+    return ql, qu, iqr
+
+def iqr(series: pl.Series, ql=0.25, qu=0.75, r=0.0):
+    ql, qu, iqr = lower_upper_iqr(series, q_lower=ql, q_upper=qu)
+    return (ql - r*iqr, qu + r*iqr)
+
+# def iqr(series, q_lower=0.25, q_upper=0.75, iqr_mult=0.0):
+#     ql, qu, iqr = lower_upper_iqr(series, q_lower=q_lower, q_upper=q_upper)
+#     return ql - iqr_mult*iqr, qu + iqr_mult*iqr
+
 def drop_null_columns(df: pl.DataFrame, strategy: Literal['any', 'all'] = 'all', include_nan=True) -> pl.DataFrame:
     if include_nan:
         if strategy == 'all':
-            col_is_all_null = df.select(pl.col("*").fill_nan(None).is_null().all().is_not()).row(0)
+            col_is_all_null = (
+                df.with_columns(sel.dtype(pl.Float32, pl.Float64).fill_nan(None))
+                .select(sel("*").is_null().all().is_not())
+            ).row(0)
+            # col_is_all_null = df.select(pl.col("*").fill_nan(None).is_null().all().is_not()).row(0)
         elif strategy == 'any':
-            col_is_all_null = df.select(pl.col("*").fill_nan(None).is_null().any().is_not()).row(0)
+            col_is_all_null = (
+                df.with_columns(sel.dtype(pl.Float32, pl.Float64).fill_nan(None))
+                .select(sel("*").is_null().any().is_not())
+            ).row(0)
+            # col_is_all_null = df.select(pl.col("*").fill_nan(None).is_null().any().is_not()).row(0)
     else:
         if strategy == 'all':
             col_is_all_null = df.select(pl.col("*").is_null().all().is_not()).row(0)
@@ -100,21 +130,21 @@ def drop_null_columns(df: pl.DataFrame, strategy: Literal['any', 'all'] = 'all',
     return df.select(pl.col([c for c, filt in zip(df.columns, col_is_all_null) if filt==True]))
 
 
-def _rename_structs_to_unnest(df: pl.DataFrame, col: str) -> pl.Expr:
-    return pl.col(col).struct.rename_fields([f"{col}-{k}" for k in df[col][0].keys()])
+def _rename_structs_to_unnest(df: pl.DataFrame, col: str, sep: str = '-') -> pl.Expr:
+    return pl.col(col).struct.rename_fields([f"{col}{sep}{k}" for k in df[col][0].keys()])
 
 
-def unnest_structs(df: pl.DataFrame, cols: str | Sequence[str]) -> pl.DataFrame:
+def unnest_structs(df: pl.DataFrame, cols: str | Sequence[str], sep: str = '-') -> pl.DataFrame:
     if isinstance(cols, str):
         cols = (cols,)
     return df.select(
-        [pl.exclude(cols), *[_rename_structs_to_unnest(df, col) for col in cols]]
+        [pl.exclude(cols), *[_rename_structs_to_unnest(df, col, sep=sep) for col in cols]]
     ).unnest(cols)
 
 
-def unnest_all_structs(df: pl.DataFrame) -> pl.DataFrame:
+def unnest_all_structs(df: pl.DataFrame, sep: str = '-') -> pl.DataFrame:
     cols = [col for col, dtype in zip(df.columns, df.dtypes) if dtype == pl.Struct]
-    return unnest_structs(df, cols)
+    return unnest_structs(df, cols, sep=sep)
 
 
 def nest_structs(df: pl.DataFrame, sep='-', pattern_after_sep: str | Sequence[str] = '[xyz]', pattern_before_sep: str | Sequence[str] = '[A-Z].*') -> pl.DataFrame:
@@ -152,7 +182,8 @@ def set_index_dtypes(df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
 
-
+def stratified_sample(by: str, n: int) -> pl.Expr:
+    return pl.int_range(0, pl.count()).shuffle().over(by) < n
 
 
 def stack_correlation_metric_by_acquisition(
@@ -227,14 +258,13 @@ def get_metadata(
         .rename(structures)
         .with_columns(pl.col("nuc_count").log(base=2).cast(pl.Float32).prefix("log2_"))
         .with_columns(pl.col("log2_nuc_count").round(0).cast(pl.UInt16).alias("cycle"))
-        .with_columns(pl.col("roi").cast(pl.Utf8).str.split("_").alias("parts"))
+        .with_columns(pl.col("roi").str.split("_").alias("parts"))
         .with_columns(
             [
-                pl.col("parts").list.first().cast(pl.Categorical).alias("well"),
+                pl.col("parts").list.first().alias("well"),
                 pl.col("parts")
                 .list.slice(1)
                 .list.join("_")
-                .cast(pl.Categorical)
                 .alias("site"),
             ]
         )
@@ -393,6 +423,10 @@ def apply_colormap(s: pl.Series, cmap=cc.m_glasbey) -> pl.Series:
     color_map = {v: cmap(unique_values.index(v)) for v in unique_values}
     return s.map_dict(color_map)
 
+
+def pipe_df_nulls(df, **kwargs):
+    plot_df_nulls(df, **kwargs)
+    return df
 
 def plot_df_nulls(
     df: pl.DataFrame,

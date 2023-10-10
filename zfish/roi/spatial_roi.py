@@ -95,7 +95,10 @@ def load_labels(f: h5py.File, level: int | None = None) -> LabelImage:
     if level is None:
         level = sorted(h5.attrs_set(f, "level", attrs_select=attrs_select))[0]
     attrs_select = {**attrs_select, **{"level": level}}
-    return xr.concat(_load_roi(f=f, attrs_select=attrs_select), dim="c")
+    dsets = _load_roi(f=f, attrs_select=attrs_select)
+    if len(dsets) == 0:
+        return xr.DataArray()
+    return xr.concat(dsets, dim="c").rename({'c': 'l'})
 
 
 def load_roi_tables(
@@ -326,8 +329,6 @@ def _get_channels_safe(img: LabelImage | SpatialImage) -> set[str]:
 SEL_KWARGS = ("method", "tolerance", "drop")
 
 
-
-
 class Roi(abc.Mapping):
     _f: list[h5py.File] = []
     _LABELS_KEY: str = "labels"
@@ -379,6 +380,8 @@ class Roi(abc.Mapping):
         name = root.stem
         if features_root is None:
             features_root = root.parent.parent / "features" / name
+        elif not Path(features_root).name == name:
+            features_root = Path(features_root) / name
         if ill_corr_root is None:
             ill_corr_root = root.parent.parent / "models"
         paths = {
@@ -398,7 +401,7 @@ class Roi(abc.Mapping):
         return Roi(
             _fp=_fp,
             data={
-                cls._LABELS_KEY: labels.rename({"c": "l"}),
+                cls._LABELS_KEY: labels,
                 cls._IMAGES_KEY: channels,
             },
             tables=tables,

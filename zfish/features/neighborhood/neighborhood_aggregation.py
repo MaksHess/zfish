@@ -127,7 +127,7 @@ def aggregate_rows(
     return neighborhood_features
 
 
-@nb.jit(parallel=True, cache=True, nopython=True)
+@nb.jit(parallel=True, cache=False, nopython=True)
 def aggregate_rows_csr_(
     indptr: np.ndarray,
     data: np.ndarray,
@@ -141,7 +141,7 @@ def aggregate_rows_csr_(
     return neighborhood_features
 
 
-@nb.jit(parallel=True, cache=True, nopython=True)
+@nb.jit(parallel=True, cache=False, nopython=True)
 def distribute_feature_csr_(
     indices: np.ndarray,
     feature: np.ndarray,
@@ -153,7 +153,7 @@ def distribute_feature_csr_(
     return data
 
 
-@nb.jit(parallel=True, cache=True, nopython=True)
+@nb.jit(parallel=True, cache=False, nopython=True)
 def aggregate_frows_csr_(
     indptr: np.ndarray,
     data: np.ndarray,
@@ -167,7 +167,7 @@ def aggregate_frows_csr_(
     return neighborhood_features
 
 
-@nb.jit(parallel=True, cache=True, nopython=True)
+@nb.jit(parallel=True, cache=False, nopython=True)
 def distribute_ffeature_csr_(
     indices: np.ndarray,
     feature: np.ndarray,
@@ -179,7 +179,7 @@ def distribute_ffeature_csr_(
     return data
 
 
-@nb.jit(parallel=True, cache=True, nopython=True)
+@nb.jit(parallel=True, cache=False, nopython=True)
 def aggregate_table_csr_(
     indptr: np.ndarray,
     indices: np.ndarray,
@@ -196,7 +196,7 @@ def aggregate_table_csr_(
     return neighborhood_features
 
 
-@nb.jit(parallel=True, cache=True, nopython=True)
+@nb.jit(parallel=True, cache=False, nopython=True)
 def aggregate_weighted_table_csr_(
     indptr: np.ndarray,
     indices: np.ndarray,
@@ -213,7 +213,7 @@ def aggregate_weighted_table_csr_(
     return neighborhood_features
 
 
-@nb.jit(parallel=False, cache=True, nopython=True)
+@nb.jit(parallel=False, cache=False, nopython=True)
 def aggregate_table_csr_nopar_(
     indptr: np.ndarray,
     indices: np.ndarray,

@@ -6,7 +6,7 @@ from zfish.features.feature_extraction_parameters import FeatureExtractionParams
 
 SLURM_COMMAND = """#!/usr/bin/env bash
 
-#SBATCH --array=0-{0}%50
+#SBATCH --array=0-{0}%100
 #SBATCH --mem-per-cpu=10000m
 #SBATCH --cpus-per-task=2
 #SBATCH --error=./logs/%A_%a.err

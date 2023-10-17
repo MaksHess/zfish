@@ -40,8 +40,7 @@ def main():
     command = SLURM_COMMAND.format(array_task_id, args.feature_extraction_params)
     print(command)
     
-    # temp_file_path = f"{Path(__file__).stem}-{array_task_id}-temp.sh"
-    temp_file_path = "temp.sh"
+    temp_file_path = f"{Path(__file__).stem}-temp.sh"
     with open(temp_file_path, "w") as f:
         f.write(command)
     os.system(f"sbatch {temp_file_path}")

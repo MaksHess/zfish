@@ -2,7 +2,7 @@ import argparse
 import os
 from pathlib import Path
 
-from zfish.features.feature_extraction_parameters import FeatureExtractionParams
+from zfish.features.feature_extraction_parameters_v2 import FeatureExtractionParams
 
 SLURM_COMMAND = """#!/usr/bin/env bash
 

@@ -2,6 +2,8 @@ import argparse
 import os
 from pathlib import Path
 
+from pydantic_yaml import parse_yaml_file_as
+
 from zfish.features.feature_extraction_parameters_v2 import FeatureExtractionParams
 
 SLURM_COMMAND = """#!/usr/bin/env bash
@@ -25,7 +27,8 @@ def main():
     parser.add_argument('-p', '--feature_extraction_params', type=str)
     args = parser.parse_args()
 
-    params = FeatureExtractionParams.parse_file(args.feature_extraction_params)
+    # params = FeatureExtractionParams.parse_file(args.feature_extraction_params)
+    params = parse_yaml_file_as(FeatureExtractionParams, args.feature_extraction_params)
     if params.image_dir:
         fld = params.root / params.image_dir
     else:

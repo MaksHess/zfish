@@ -57,7 +57,7 @@ def get_itk_features_df(
     *,
     props: set[str] | None = None,
 ) -> pl.DataFrame:
-    props = set() if props is None else props
+    props = set() if props is None else set(props)
     costly_features = _calculate_costly_features(props)
 
     LabelMapType = itk.LabelMap[
@@ -98,7 +98,7 @@ def _get_df_from_feature_labelmap(
     props.add("Label")
 
     lbl_obj_sample = lbl_map.GetLabelObject(lbl_map.GetLabels()[0])
-    get_pattern = re.compile("|".join([f"^Get{prop}" for prop in props]))
+    get_pattern = re.compile("|".join([f"^Get{prop}$" for prop in props]))
     get_props = list(filter(get_pattern.search, dir(lbl_obj_sample)))
     if not include_itk_transforms:
         get_props = list(filter(_is_not_itk_transform, get_props))

@@ -1,4 +1,5 @@
 # %%
+from functools import partial
 from typing import Callable
 
 import itk
@@ -17,8 +18,8 @@ DISTANCE_ITK_FEATURES = {
     "Maximum",  # MaximumDistance
     "Minimum",  # MinimumDistance
     "Median",  # MedianDistance
-    # "MaximumIndex",  # ClosestPixel
-    # "MinimumIndex",  # FurthestPixel
+    "MaximumIndex",  # ClosestPixel
+    "MinimumIndex",  # FurthestPixel
 }
 
 
@@ -35,10 +36,10 @@ def _distance_along_axis(mask: BinaryImage, axis: str = "z") -> DistanceTransfor
 
 
 DISTANCE_TRANSFORMS = {
-    "DistToBorder": _distance_to_border,
-    "DistAlongZ": _distance_along_axis,
-    # "DistAlongY": partial(_distance_along_axis, axis="y"),
-    # "DistAlongX": partial(_distance_along_axis, axis="x"),
+    "DistanceToBorder": _distance_to_border,
+    "DistanceAlongZ": _distance_along_axis,
+    "DistanceAlongY": partial(_distance_along_axis, axis="y"),
+    "DistanceAlongX": partial(_distance_along_axis, axis="x"),
 }
 
 
@@ -50,24 +51,24 @@ def _get_mask(lbl_img: LabelImage, lbl: int, lbl_dim: str = 'l') -> BinaryImage:
 
 
 def get_distance_features(
-    lbl_img: LabelImage,
-    lbl_img_to: LabelImage,
-    lbl_to: int,
-    distance_functions: dict[
-        str, Callable[[BinaryImage], DistanceTransform]
-    ] = DISTANCE_TRANSFORMS,
+    label_image: LabelImage,
+    label_image_to: LabelImage,
+    label_to: int,
+    distance_transforms: tuple[str, ...] = tuple(DISTANCE_TRANSFORMS.keys()),
+    features: tuple[str, ...] = DISTANCE_ITK_FEATURES,
     lbl_dim: str = 'l',
     named_features: bool = True,
     object_column: bool = False,
     struct_index: bool = False,
 ):
+    distance_functions = {k: DISTANCE_TRANSFORMS[k] for k in distance_transforms}
     if struct_index:
         index = "index"
     elif object_column:
         index = ["object", "label"]
     else:
         index = "label"
-    mask = _get_mask(lbl_img_to, lbl_to, lbl_dim=lbl_dim)
+    mask = _get_mask(label_image_to, label_to, lbl_dim=lbl_dim)
 
     dfs = []
     for name, distance_function in distance_functions.items():
@@ -77,11 +78,11 @@ def get_distance_features(
             print(f"Can't compute {name}")
             print(f"{e}")
             continue
-        # return lbl_img, dt
+        # return label_image, dt
         df = get_si_features_df(
-            lbl_img,
+            label_image,
             dt,
-            props=DISTANCE_ITK_FEATURES,
+            props=features,
             lbl_dim=lbl_dim,
             named_features=named_features,
             object_column=object_column,

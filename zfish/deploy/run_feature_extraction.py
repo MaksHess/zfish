@@ -9,14 +9,14 @@ SLURM_COMMAND = """#!/usr/bin/env bash
 #SBATCH --array=0-{0}%100
 #SBATCH --mem-per-cpu=10000m
 #SBATCH --cpus-per-task=2
-#SBATCH --error=./logs/%A_%a.err
-#SBATCH --output=./logs/%A_%a.out
+#SBATCH --error=./logs/slurm-%a_%A.err
+#SBATCH --output=./logs/slurm-%a_%A.out
 #SBATCH --time=3-00:00:00
 
 source ~/.bashrc
 conda activate zfish
 
-exec python feature_extraction.py $SLURM_ARRAY_TASK_ID -p {1}
+exec python feature_extraction_v2.py $SLURM_ARRAY_TASK_ID -p {1}
 """
 
 

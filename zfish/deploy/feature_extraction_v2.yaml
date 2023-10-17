@@ -1,0 +1,93 @@
+# root: "/data/active/marvwy/20220721_ZE4i2_aligned"
+root: "M:\\marvwy\\20220721_ZE4i2_aligned"
+
+image_dir: "imgs"
+
+output_dir: "features_v2"
+
+level: 1
+
+features:
+  hierarchy:
+  - label_image: "cells"
+    parent_label_images:
+      -  "embryoRaw"
+
+  - label_image: "nucleiRaw3"
+    parent_label_images:
+      -  "embryoRaw"
+      -  "cells"
+
+  - label_image: "cyto"
+    parent_label_images:
+      -  "embryoRaw"
+      -  "cells"
+
+
+  label:
+  - labelss:
+    - "nucleiRaw3"
+
+  - labelss:
+    - "cells"
+    - "embryoRaw"
+    props:
+    - "!FeretDiameter"
+  
+
+  correlation:
+  - labelss:
+    - 'nucleiRaw3'
+    channel_pairs:
+    - channel0: "DAPI.1"
+      channel1: "DAPI.0"
+    - channel0: "DAPI.1"
+      channel1: "DAPI.2"
+    - channel0: "DAPI.1"
+      channel1: "DAPI.3"
+    props:
+    - "PearsonR"
+    - "SpearmanR"
+    - "KendallTau"
+    
+
+  density:
+  - labelss:
+    - "nucleiRaw3"
+    - "cells"
+    delaunay_mask_labels:
+    - "embryoRaw"
+
+
+  distance:
+  - labelss:
+    - "nucleiRaw3"
+    label_objects_to:
+    - label_image: "embryoRaw"
+      label_id: 1
+    distance_transforms:
+    - "DistanceToBorder"
+    - "DistanceAlongZ"
+    props:
+    - "Centroid"
+    - "Minimum"
+    - "Maximum"
+
+
+  intensity:
+  - labelss:
+    - "nucleiRaw3"
+    channels:
+    - 'DAPI.0'
+    - 'DAPI.1'
+    - 'PCNA.0'
+
+
+intensity_correction:
+  # t_decay_models: "/data/active/marvwy/20220721_ZE4i2_aligned/models/t_decay"
+  # z_decay_models: "/data/active/marvwy/20220721_ZE4i2_aligned/models/z_decay"
+  t_decay_models: "M:\\marvwy\\20220721_ZE4i2_aligned\\models\\t_decay"
+  z_decay_models: "M:\\marvwy\\20220721_ZE4i2_aligned\\models\\z_decay\\ExpNoOffset(loss='huber', features=['MediumPath', 'EmbryoPath'])"
+  z_decay_two_step_label: "embryoRaw"
+  z_decay_add_model_name_to_feature_path: true
+  z_decay_default_models: null

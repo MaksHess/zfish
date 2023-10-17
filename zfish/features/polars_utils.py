@@ -142,18 +142,18 @@ def unnest_structs(df: pl.DataFrame, cols: str | Sequence[str], sep: str = '-') 
     ).unnest(cols)
 
 
-def unnest_all_structs(df: pl.DataFrame, sep: str = '-') -> pl.DataFrame:
+def unnest_all_structs(df: pl.DataFrame, sep: str = '\.') -> pl.DataFrame:
     cols = [col for col, dtype in zip(df.columns, df.dtypes) if dtype == pl.Struct]
     return unnest_structs(df, cols, sep=sep)
 
 
-def nest_structs(df: pl.DataFrame, sep='-', pattern_after_sep: str | Sequence[str] = '[xyz]', pattern_before_sep: str | Sequence[str] = '[A-Z].*') -> pl.DataFrame:
+def nest_structs(df: pl.DataFrame, sep='\.', pattern_after_sep: str | Sequence[str] = '[xyz]', pattern_before_sep: str | Sequence[str] = '[A-Z].*') -> pl.DataFrame:
     struct_columns = (
     pl.Series('columns', df.columns)
     .to_frame()
     .with_columns([
-        pl.col('columns').str.extract(f"^({pattern_before_sep})-({pattern_after_sep})$", 1),
-        pl.col('columns').str.extract(f"^({pattern_before_sep})-({pattern_after_sep})$", 2).alias('field_names')
+        pl.col('columns').str.extract(f"^({pattern_before_sep}){sep}({pattern_after_sep})$", 1),
+        pl.col('columns').str.extract(f"^({pattern_before_sep}){sep}({pattern_after_sep})$", 2).alias('field_names')
         ])
     ).drop_nulls().groupby('columns', maintain_order=True).agg(pl.all()).rows()
 

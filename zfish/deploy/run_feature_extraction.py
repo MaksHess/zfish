@@ -11,8 +11,8 @@ SLURM_COMMAND = """#!/usr/bin/env bash
 #SBATCH --array=0-{0}%100
 #SBATCH --mem-per-cpu=10000m
 #SBATCH --cpus-per-task=2
-#SBATCH --error=./logs/slurm-%a_%A.err
-#SBATCH --output=./logs/slurm-%a_%A.out
+#SBATCH --error=./logs/%a_%A.err
+#SBATCH --output=./logs/%a_%A.out
 #SBATCH --time=3-00:00:00
 
 source ~/.bashrc
@@ -35,13 +35,17 @@ def main():
         fld = params.root
     print(fld)
     n = len(list(Path(fld).glob('*.h5')))
+    array_task_id = n - 1
 
-    command = SLURM_COMMAND.format(n - 1, args.feature_extraction_params)
+    command = SLURM_COMMAND.format(array_task_id, args.feature_extraction_params)
     print(command)
-    with open("temp.sh", "w") as f:
+    
+    # temp_file_path = f"{Path(__file__).stem}-{array_task_id}-temp.sh"
+    temp_file_path = "temp.sh"
+    with open(temp_file_path, "w") as f:
         f.write(command)
-    os.system("sbatch temp.sh")
-    os.unlink("temp.sh")
+    os.system(f"sbatch {temp_file_path}")
+    os.unlink(temp_file_path)
 
 
 if __name__ == "__main__":

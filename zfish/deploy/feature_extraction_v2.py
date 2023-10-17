@@ -1,6 +1,7 @@
 # %%
 import argparse
 import logging
+import sys
 from collections import defaultdict
 
 import polars as pl
@@ -13,6 +14,10 @@ from zfish.roi.spatial_roi import Roi, apply_z_decay_models_to_roi, read_models
 logger = logging.getLogger(__name__)
 logger.setLevel('DEBUG')
 
+handler = logging.StreamHandler(sys.stdout)
+handler.setLevel('DEBUG')
+logger.addHandler(handler)
+
 def main():
     logger.info("Parsing argunments...")
     parser = argparse.ArgumentParser()
@@ -24,15 +29,13 @@ def main():
     params = parse_yaml_file_as(
         FeatureExtractionParams, args.feature_extraction_parameters
     )
-    from pprint import pprint
-    pprint(params)
-    print()
+    
+    from pprint import pformat
+    logger.debug(f"params:\n{pformat(params)}\n")
     site_params = params.get_site_params_by_index(args.idx)
-    pprint(site_params)
-    print()
+    logger.debug(f"site_params:\n{pformat(site_params)}\n")
     
     logger.info("Lazy loading roi.")
-    return
     lazy_roi = Roi.from_file(
         site_params.roi_path,
         level=site_params.level,

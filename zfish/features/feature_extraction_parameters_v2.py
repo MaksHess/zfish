@@ -626,32 +626,32 @@ class IntensityCorrection(BaseModel):
 
 
 # TODO: Fix this
-from enum import Enum, auto
-from typing import Literal
+# from enum import Enum, auto
+# from typing import Literal
 
 
-class IntensityCorrectionV2(BaseModel):
-    t: "TIntensityModels" | None = None
-    z: "ZIntensityModels" | None = None
+# class IntensityCorrectionV2(BaseModel):
+#     t: "TIntensityModels" | None = None
+#     z: "ZIntensityModels" | None = None
 
 
-class Element(str, Enum):
-    channel = "channel"
-    wavelength = "wavelength"
-    stain = "stain"
+# class Element(str, Enum):
+#     channel = "channel"
+#     wavelength = "wavelength"
+#     stain = "stain"
 
 
-class TIntensityModels(BaseModel):
-    raise NotImplementedError
+# class TIntensityModels(BaseModel):
+#     raise NotImplementedError
 
 
-class XYIntensityModels(BaseModel):
-    raise NotImplementedError
+# class XYIntensityModels(BaseModel):
+#     raise NotImplementedError
 
 
-class ZIntensityModels(BaseModel):
-    root: Path
-    element: Element = "channel"
+# class ZIntensityModels(BaseModel):
+#     root: Path
+#     element: Element = "channel"
 
 
 class SiteFeatureExtractionParams(BaseModel):

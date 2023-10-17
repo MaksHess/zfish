@@ -1,7 +1,4 @@
 # %%
-import warnings
-
-import func_timeout
 import polars as pl
 
 from zfish.features._base import get_si_features_df

@@ -35,6 +35,7 @@ requirements = [
     "pingouin",
     "numba",
     "python-forge",
+    "strenum"
 ]
 
 test_requirements = []
@@ -60,7 +61,9 @@ setup(
         ],
     },
     install_requires=requirements,
-    ext_modules=cythonize("zfish/features/neighborhood/neighborhood_matrix_parallel.pyx"),
+    ext_modules=cythonize(
+        "zfish/features/neighborhood/neighborhood_matrix_parallel.pyx"
+    ),
     license="MIT license",
     long_description=readme + "\n\n" + history,
     include_package_data=True,

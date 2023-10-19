@@ -5,6 +5,7 @@ images in case of touch neighborhood.
 # %%
 import functools
 import inspect
+import logging
 import warnings
 from collections.abc import Callable, Iterable, Sequence
 from itertools import accumulate, product
@@ -32,6 +33,8 @@ from zfish.features.neighborhood.neighborhood_matrix_parallel import (
 )
 from zfish.features.polars_utils import unnest_all_structs
 from zfish.features.types import LabelImage, SpatialImage
+
+logger = logging.getLogger(__name__)
 
 CSRArray: TypeAlias = csr_array
 AggFn: TypeAlias = Callable[[NDArray], NDArray]
@@ -492,6 +495,12 @@ def query_knn_adjacency(
     k: int | Iterable[int],
     self_loops: bool = False,
 ) -> CSRArray:
+    n_objects = neighbors._fit_X.shape[0]
+    if k > (n_objects-1):
+        logger.warn(
+            f"k={k} > (n_objects-1)={(n_objects-1)}; setting k to {n_objects-1}"
+        )
+        k = n_objects-1
     X = neighbors._fit_X if self_loops else None
     query = neighbors.kneighbors_graph(
         X=X,
@@ -507,6 +516,12 @@ def query_knn_distance(
     k: int | Iterable[int],
     self_loops: bool = False,
 ) -> CSRArray:
+    n_objects = neighbors._fit_X.shape[0]
+    if k > (n_objects-1):
+        logger.warn(
+            f"k={k} > (n_objects-1)={(n_objects-1)}; setting k to {n_objects-1}"
+        )
+        k = n_objects-1
     X = neighbors._fit_X if self_loops else None
     query = neighbors.kneighbors_graph(
         X=X,

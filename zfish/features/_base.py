@@ -105,7 +105,7 @@ def _get_df_from_feature_labelmap(
     df = pl.DataFrame()
     for get_prop in get_props:
         prop = get_prop[3:]
-        data = [getattr(lbl_map[l], get_prop)() for l in lbl_map.GetLabels()]
+        data = [getattr(lbl_map[lbl], get_prop)() for lbl in lbl_map.GetLabels()]
         data = [convert_itk_dtypes(d) for d in data]
         df = df.with_columns(
             [

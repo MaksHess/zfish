@@ -1,5 +1,5 @@
-# root: "/data/active/marvwy/20220721_ZE4i2_aligned"
-root: "M:\\marvwy\\20220721_ZE4i2_aligned"
+root: "/data/active/marvwy/20220721_ZE4i2_aligned"
+# root: "M:\\marvwy\\20220721_ZE4i2_aligned"
 
 image_dir: "imgs"
 
@@ -18,12 +18,6 @@ features:
       -  "embryoRaw"
       -  "cells"
 
-  - label_image: "cyto"
-    parent_label_images:
-      -  "embryoRaw"
-      -  "cells"
-
-
   label:
   - labelss:
     - "nucleiRaw3"
@@ -33,8 +27,13 @@ features:
     - "embryoRaw"
     props:
     - "!FeretDiameter"
-  
 
+  intensity:
+  - labelss:
+    - "nucleiRaw3"
+    channels:
+    - '*'
+  
   correlation:
   - labelss:
     - 'nucleiRaw3'
@@ -54,9 +53,17 @@ features:
   density:
   - labelss:
     - "nucleiRaw3"
+    delaunay_mask_labels:
+    - "embryoRaw"
+
+  - labelss:
     - "cells"
     delaunay_mask_labels:
     - "embryoRaw"
+    params:
+      radius: []
+      distance_to_closest_neighbor: False
+      knn_distance: []
 
 
   distance:
@@ -74,20 +81,10 @@ features:
     - "Maximum"
 
 
-  intensity:
-  - labelss:
-    - "nucleiRaw3"
-    channels:
-    - 'DAPI.0'
-    - 'DAPI.1'
-    - 'PCNA.0'
-
-
 intensity_correction:
-  # t_decay_models: "/data/active/marvwy/20220721_ZE4i2_aligned/models/t_decay"
-  # z_decay_models: "/data/active/marvwy/20220721_ZE4i2_aligned/models/z_decay"
-  t_decay_models: "M:\\marvwy\\20220721_ZE4i2_aligned\\models\\t_decay"
-  z_decay_models: "M:\\marvwy\\20220721_ZE4i2_aligned\\models\\z_decay\\ExpNoOffset(loss='huber', features=['MediumPath', 'EmbryoPath'])"
-  z_decay_two_step_label: "embryoRaw"
   z_decay_add_model_name_to_feature_path: true
-  z_decay_default_models: null
+  t_decay_models: "/data/active/marvwy/20220721_ZE4i2_aligned/models/t_decay"
+  z_decay_models: "/data/active/marvwy/20220721_ZE4i2_aligned/models/z_decay/ExpFitLinear(loss='huber', features=['MediumPath', 'EmbryoPath'])"
+  # t_decay_models: "M:\\marvwy\\20220721_ZE4i2_aligned\\models\\t_decay"
+  # z_decay_models: "M:\\marvwy\\20220721_ZE4i2_aligned\\models\\z_decay\\ExpFitLinear(loss='huber', features=['MediumPath', 'EmbryoPath'])"
+  z_decay_two_step_label: "embryoRaw"

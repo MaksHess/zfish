@@ -17,6 +17,7 @@ from toolz.itertoolz import take
 
 from zfish.features.types import LabelImage, SpatialImage
 from zfish.image.image import to_si
+from zfish.roi.spatial_roi import Roi
 
 DEFAULT_RNG = np.random.default_rng(42)
 
@@ -451,7 +452,21 @@ DIMS = ("t", "c", "z", "y", "x")
 SPATIAL_DIMS = ("z", "y", "x")
 
 
-def image_si(
+def get_roi(
+    shape: Sequence[int] = (144, 288, 288),
+    n_channels: int = 3,
+    n_labels: int = 5,
+    scale: Sequence[int] | None = None,
+):
+    labels = hierarchical_labels(
+        shape=shape,
+        scale=scale,
+        objects=("emb", "cell", "nuc", "cyto", "loc")[:n_labels],
+    ).rename({'c': 'l'})
+    channels = get_image_si(shape=(n_channels, *shape), scale=scale)
+    return Roi(name='roi', data=dict(labels=labels, images=channels))
+
+def get_image_si(
     shape: Sequence[int],
     dims: Sequence[Literal["t", "c", "z", "y", "x"]] | None = None,
     scale: Sequence[float] | None = None,

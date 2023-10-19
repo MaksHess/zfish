@@ -351,7 +351,8 @@ class DistanceQueriesParser(BaseModel):
             qs.append(
                 DistanceQuery(
                     label_image=labels,
-                    label_object_to=label_object_to,
+                    #TODO: check label_object_to type
+                    label_object_to=dict(label_object_to),
                     features=valid_request.props,
                     distance_transforms=valid_request.distance_transforms,
                 )

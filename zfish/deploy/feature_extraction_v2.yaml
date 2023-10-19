@@ -39,12 +39,12 @@ features:
   - labelss:
     - 'nucleiRaw3'
     channel_pairs:
-    - channel0: "DAPI.1"
-      channel1: "DAPI.0"
-    - channel0: "DAPI.1"
-      channel1: "DAPI.2"
-    - channel0: "DAPI.1"
-      channel1: "DAPI.3"
+    - channel_0: "DAPI.1"
+      channel_1: "DAPI.0"
+    - channel_0: "DAPI.1"
+      channel_1: "DAPI.2"
+    - channel_0: "DAPI.1"
+      channel_1: "DAPI.3"
     props:
     - "PearsonR"
     - "SpearmanR"
@@ -64,7 +64,7 @@ features:
     - "nucleiRaw3"
     label_objects_to:
     - label_image: "embryoRaw"
-      label_id: 1
+      label: 1
     distance_transforms:
     - "DistanceToBorder"
     - "DistanceAlongZ"

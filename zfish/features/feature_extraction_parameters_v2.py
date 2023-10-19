@@ -1,35 +1,36 @@
 # %%
-from abc import ABC, abstractmethod
-from functools import reduce
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import polars as pl
-
 from collections.abc import Iterable
+from functools import reduce
 from itertools import chain, product, repeat
 from pathlib import Path
-from typing import Any, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 from pydantic import BaseModel, Field, field_validator
 from typing_extensions import Self
 
-from zfish.features.correlation import CORRELATION_FEATURES, get_colocalization_features
-from zfish.features.distance import (
-    DISTANCE_ITK_FEATURES,
-    DISTANCE_TRANSFORMS,
-    get_distance_features,
+from zfish.features.colocalization import ColocalizationQuery
+from zfish.features.constants import (
+    DefaultColocalizationFeature,
+    DefaultDistanceFeature,
+    DefaultDistanceFunction,
+    DefaultLabelFeature,
+    DensityParams,
+    IntensityFeature,
 )
+from zfish.features.distance import DistanceQuery
 from zfish.features.feature_types import (
     Resources,
 )
-from zfish.features.intensity import INTENSITY_FEATURES, get_intensity_features
-from zfish.features.label import LABEL_FEATURES, get_label_features
-from zfish.features.neighborhood.density import get_density_features
-from zfish.features.object_hierarchy import get_parent_objects
+from zfish.features.intensity import IntensityQuery
+from zfish.features.label import LabelQuery
+from zfish.features.neighborhood.density import DensityQuery
+from zfish.features.object_hierarchy import HierarchyQuery
+from zfish.features.queries import FeatureQuery
 from zfish.features.types import LabelImage, SpatialImage
 from zfish.roi.spatial_roi import Roi
 
+if TYPE_CHECKING:
+    pass
 
 def _get_channels_safe(img: LabelImage | SpatialImage) -> set[str]:
     """
@@ -41,14 +42,20 @@ def _get_channels_safe(img: LabelImage | SpatialImage) -> set[str]:
     return set([str(e) for e in img.c.values])
 
 
-Channel: TypeAlias = str
-Labels: TypeAlias = str
-ChannelPair: TypeAlias = tuple[Channel, Channel]
-ChannelSet: TypeAlias = tuple[Channel, ...]
-LabelObject: TypeAlias = tuple[Labels, int]
-Feature: TypeAlias = Any
+# Channel: TypeAlias = str
+# Labels: TypeAlias = str
+# ChannelPair: TypeAlias = tuple[Channel, Channel]
+# ChannelSet: TypeAlias = tuple[Channel, ...]
+# LabelObject: TypeAlias = tuple[Labels, int]
+# Feature: TypeAlias = Any
+class LabelObject(BaseModel):
+    label_image: str
+    label: int
 
-
+class ChannelPair(BaseModel):
+    channel_0: str
+    channel_1: str
+    
 def _parse_star_expression(
     channels: set[str],
     available_channels: set[str],
@@ -115,9 +122,9 @@ def _parse_pairwise_star_expression(
 def _parse_channel_pairs(
     channel_pairs: tuple[ChannelPair, ...], available_channels: set[str]
 ) -> tuple[ChannelPair, ...]:
-    channel_pairs_tpl = [(cp.channel0, cp.channel1) for cp in channel_pairs]
+    channel_pairs_tpl = [(cp.channel_0, cp.channel_1) for cp in channel_pairs]
     out = _parse_pairwise_star_expression(channel_pairs_tpl, available_channels)
-    return tuple(ChannelPair(channel0=ch0, channel1=ch1) for ch0, ch1 in out)
+    return tuple(ChannelPair(channel_0=ch0, channel_1=ch1) for ch0, ch1 in out)
 
 
 class MockRoi(BaseModel):
@@ -152,52 +159,7 @@ def _make_iterable(a: T | Iterable[T]) -> Iterable[T]:
         a = [a]
     return a
 
-
-class FeatureQuery(ABC):
-    @abstractmethod
-    def load_resources(self) -> dict[str, Any]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def compute(self) -> "pl.DataFrame":
-        raise NotImplementedError
-
-
-class HierarchyQuery(BaseModel, FeatureQuery):
-    label_image: str
-    parent_label_images: tuple[str, ...]
-
-    @property
-    def resources(self) -> Resources:
-        return Resources(label_images=(self.label_image,) + self.parent_label_images)
-
-    def load_resources(self, roi: Roi) -> dict[str, Any]:
-        return {
-            "label_image": roi.sel(l=self.label_image).drop_dim("c").labels.compute(),
-            "parent_label_images": roi.sel(l=list(self.parent_label_images))
-            .drop_dim("c")
-            .labels.compute(),
-        }
-
-    def compute(self, roi: Roi) -> "pl.DataFrame":
-        return get_parent_objects(**self.load_resources(roi))
-
-
-class LabelQuery(BaseModel, FeatureQuery):
-    label_image: str
-    features: tuple[str, ...]
-
-    def load_resources(self, roi: Roi) -> dict[str, Any]:
-        return {
-            "label_image": roi.sel(l=self.label_image).drop_dim("c").labels.compute(),
-            "features": self.features,
-        }
-
-    def compute(self, roi: Roi) -> "pl.DataFrame":
-        return get_label_features(**self.load_resources(roi))
-
-
-class LabelQueries(BaseModel):
+class LabelQueriesParser(BaseModel):
     labelss: tuple[str, ...] = Field(default="*", validate_default=True)
     props: tuple[str, ...] = Field(default="*", validate_default=True)
 
@@ -207,11 +169,13 @@ class LabelQueries(BaseModel):
 
     @field_validator("props", mode="before")
     def _resolve_star_expression(cls, val):
-        val_out = _parse_star_expression(_make_iterable(val), LABEL_FEATURES)
+        val_out = _parse_star_expression(
+            _make_iterable(val), tuple(DefaultLabelFeature)
+        )
         return val_out
 
-    def _parse_resource_star_expressions(self, roi: Roi) -> "IntensityQueries":
-        return LabelQueries(
+    def _parse_resource_star_expressions(self, roi: Roi) -> "LabelQueriesParser":
+        return LabelQueriesParser(
             labelss=_parse_star_expression(self.labelss, roi.resources["label_images"]),
             props=self.props,
         )
@@ -233,23 +197,7 @@ class LabelQueries(BaseModel):
         return qs
 
 
-class IntensityQuery(BaseModel, FeatureQuery):
-    label_image: str
-    channel: str
-    features: tuple[str, ...]
-
-    def load_resources(self, roi: Roi) -> dict[str, Any]:
-        return {
-            "label_image": roi.sel(l=self.label_image).drop_dim("c").labels.compute(),
-            "intensity_image": roi.sel(c=self.channel).drop_dim("l").images.compute(),
-            "features": self.features,
-        }
-
-    def compute(self, roi: Roi) -> "pl.DataFrame":
-        return get_intensity_features(**self.load_resources(roi))
-
-
-class IntensityQueries(BaseModel):
+class IntensityQueriesParser(BaseModel):
     labelss: tuple[str, ...] = Field(default="*", validate_default=True)
     channels: tuple[str, ...] = Field(default="*", validate_default=True)
     props: tuple[str, ...] = Field(default="*", validate_default=True)
@@ -260,11 +208,11 @@ class IntensityQueries(BaseModel):
 
     @field_validator("props", mode="before")
     def _resolve_star_expression(cls, val):
-        val_out = _parse_star_expression(_make_iterable(val), INTENSITY_FEATURES)
+        val_out = _parse_star_expression(_make_iterable(val), tuple(IntensityFeature))
         return val_out
 
-    def _parse_resource_star_expressions(self, roi: Roi) -> "IntensityQueries":
-        return IntensityQueries(
+    def _parse_resource_star_expressions(self, roi: Roi) -> "IntensityQueriesParser":
+        return IntensityQueriesParser(
             labelss=_parse_star_expression(self.labelss, roi.resources["label_images"]),
             channels=_parse_star_expression(self.channels, roi.resources["channels"]),
             props=self.props,
@@ -291,36 +239,10 @@ class IntensityQueries(BaseModel):
         return qs
 
 
-class ChannelPair(BaseModel):
-    channel0: str
-    channel1: str
-
-
-class CorrelationQuery(BaseModel, FeatureQuery):
-    label_image: str
-    channel_pair: ChannelPair
-    features: tuple[str, ...]
-
-    def load_resources(self, roi: Roi) -> dict[str, Any]:
-        return {
-            "label_image": roi.sel(l=self.label_image).drop_dim("c").labels.compute(),
-            "channel0": roi.sel(c=self.channel_pair.channel0)
-            .drop_dim("l")
-            .images.compute(),
-            "channel1": roi.sel(c=self.channel_pair.channel1)
-            .drop_dim("l")
-            .images.compute(),
-            "features": self.features,
-        }
-
-    def compute(self, roi: Roi) -> "pl.DataFrame":
-        return get_colocalization_features(**self.load_resources(roi))
-
-
-class CorrelationQueries(BaseModel):
+class ColocalizationQueriesParser(BaseModel):
     labelss: tuple[str, ...] = Field(default="*", validate_default=True)
     channel_pairs: tuple[ChannelPair, ...] = Field(
-        default=(ChannelPair(channel0="*", channel1="*"),), validate_default=True
+        default=(ChannelPair(channel_0="*", channel_1="*"),), validate_default=True
     )
     props: tuple[str, ...] = Field(default="*", validate_default=True)
 
@@ -330,11 +252,13 @@ class CorrelationQueries(BaseModel):
 
     @field_validator("props", mode="before")
     def _resolve_star_expression(cls, val):
-        val_out = _parse_star_expression(_make_iterable(val), CORRELATION_FEATURES)
+        val_out = _parse_star_expression(
+            _make_iterable(val), tuple(DefaultColocalizationFeature)
+        )
         return val_out
 
-    def _parse_resource_star_expressions(self, roi: Roi) -> "CorrelationQueries":
-        return CorrelationQueries(
+    def _parse_resource_star_expressions(self, roi: Roi) -> "ColocalizationQueriesParser":
+        return ColocalizationQueriesParser(
             labelss=_parse_star_expression(self.labelss, roi.resources["label_images"]),
             channel_pairs=_parse_channel_pairs(
                 self.channel_pairs, roi.resources["channels"]
@@ -351,12 +275,12 @@ class CorrelationQueries(BaseModel):
         return Resources(
             label_images=self.labelss,
             channels=set(
-                [cp.channel0 for cp in self.channel_pairs]
-                + [cp.channel1 for cp in self.channel_pairs]
+                [cp.channel_0 for cp in self.channel_pairs]
+                + [cp.channel_1 for cp in self.channel_pairs]
             ),
         )
 
-    def queries(self, roi: Roi) -> list[CorrelationQuery]:
+    def queries(self, roi: Roi) -> list[ColocalizationQuery]:
         parsed_request = self._parse_resource_star_expressions(roi)
         valid_request = parsed_request._validate_resources(roi)
         qs = []
@@ -364,42 +288,17 @@ class CorrelationQueries(BaseModel):
             valid_request.labelss, valid_request.channel_pairs
         ):
             qs.append(
-                CorrelationQuery(
+                ColocalizationQuery
+                (
                     label_image=labels,
-                    channel_pair=channel_pair,
+                    channel_pair=tuple(dict(channel_pair).values()),
                     features=valid_request.props,
                 )
             )
         return qs
 
 
-class LabelObject(BaseModel):
-    label_image: str
-    label_id: int
-
-
-class DistanceQuery(BaseModel, FeatureQuery):
-    label_image: str
-    label_object_to: LabelObject
-    features: tuple[str, ...]
-    distance_transforms: tuple[str, ...]
-
-    def load_resources(self, roi: Roi) -> dict[str, Any]:
-        return {
-            "label_image": roi.sel(l=self.label_image).drop_dim("c").labels.compute(),
-            "label_image_to": roi.sel(l=self.label_object_to.label_image)
-            .drop_dim("c")
-            .labels.compute(),
-            "label_to": self.label_object_to.label_id,
-            "features": self.features,
-            "distance_transforms": self.distance_transforms,
-        }
-
-    def compute(self, roi: Roi) -> "pl.DataFrame":
-        return get_distance_features(**self.load_resources(roi))
-
-
-class DistanceQueries(BaseModel):
+class DistanceQueriesParser(BaseModel):
     label_objects_to: tuple[LabelObject, ...]
     labelss: tuple[str, ...] = Field(default="*", validate_default=True)
     props: tuple[str, ...] = Field(default="*", validate_default=True)
@@ -413,16 +312,16 @@ class DistanceQueries(BaseModel):
 
     @field_validator("props", mode="before")
     def _resolve_star_expression(cls, val):
-        val_out = _parse_star_expression(_make_iterable(val), DISTANCE_ITK_FEATURES)
+        val_out = _parse_star_expression(_make_iterable(val), tuple(DefaultDistanceFeature))
         return val_out
 
     @field_validator("distance_transforms", mode="before")
     def _resolve_star_expression2(cls, val):
-        val_out = _parse_star_expression(_make_iterable(val), DISTANCE_TRANSFORMS)
+        val_out = _parse_star_expression(_make_iterable(val), tuple(DefaultDistanceFunction))
         return val_out
 
-    def _parse_resource_star_expressions(self, roi: Roi) -> "DistanceQueries":
-        return DistanceQueries(
+    def _parse_resource_star_expressions(self, roi: Roi) -> "DistanceQueriesParser":
+        return DistanceQueriesParser(
             labelss=_parse_star_expression(self.labelss, roi.resources["label_images"]),
             label_objects_to=self.label_objects_to,
             props=self.props,
@@ -460,70 +359,23 @@ class DistanceQueries(BaseModel):
         return qs
 
 
-DENSITY_RADIUS_NEIGHBORHOODS = tuple([10, 20, 30, 40, 50, 80, 100, 150, 200, 250])
 
-DENSITY_DISTANCE_TO_CLOSEST_NEIGHBOR = True
-
-DENSITY_KNN_DISTANCE_NEIGHBORHOODS = tuple([2, 5, 10, 20, 50, 100, 200])
-
-DENSITY_DELAUNAY_NEIGHBORHOODS = tuple([1])
-
-DENSITY_TOUCH_NEIGHBORHOODS = tuple([1])
-
-DENSITY_ADJACENCY_AGGFUNCS = tuple(["Count"])
-DENSITY_DISTANCE_AGGFUNCS = tuple(["Mean", "Max"])
-
-
-class DensityQuery(BaseModel, FeatureQuery):
-    label_image: str
-    delaunay_mask_label: str | None = None
-    radius: tuple[float, ...] = tuple(DENSITY_RADIUS_NEIGHBORHOODS)
-    knn_distance: tuple[int, ...] = tuple(DENSITY_KNN_DISTANCE_NEIGHBORHOODS)
-    distance_to_closest_neighbor: bool = DENSITY_DISTANCE_TO_CLOSEST_NEIGHBOR
-    delaunay: tuple[int, ...] = tuple(DENSITY_DELAUNAY_NEIGHBORHOODS)
-    touch: tuple[int, ...] = tuple(DENSITY_TOUCH_NEIGHBORHOODS)
-    adjacency_aggfuncs: tuple[str, ...] = tuple(DENSITY_ADJACENCY_AGGFUNCS)
-    distance_aggfuncs: tuple[str, ...] = tuple(DENSITY_DISTANCE_AGGFUNCS)
-
-    def load_resources(self, roi: Roi) -> dict[str, Any]:
-        return {
-            "label_image": roi.sel(l=self.label_image).drop_dim("c").labels.compute(),
-            "delaunay_mask_label": None
-            if self.delaunay_mask_label is None
-            else roi.sel(l=self.delaunay_mask_label).drop_dim("c").labels.compute(),
-        }
-
-    def compute(self, roi: Roi) -> "pl.DataFrame":
-        return get_density_features(**self.load_resources(roi))
-
-
-class DensityQueries(BaseModel):
+class DensityQueriesParser(BaseModel):
     labelss: tuple[str, ...]
     delaunay_mask_labels: tuple[str, ...] | None = None
-
-    radius: tuple[float, ...] = tuple(DENSITY_RADIUS_NEIGHBORHOODS)
-    knn_distance: tuple[int, ...] = tuple(DENSITY_KNN_DISTANCE_NEIGHBORHOODS)
-    distance_to_closest_neighbor: bool = DENSITY_DISTANCE_TO_CLOSEST_NEIGHBOR
-    delaunay: tuple[int, ...] = tuple(DENSITY_DELAUNAY_NEIGHBORHOODS)
-    touch: tuple[int, ...] = tuple(DENSITY_TOUCH_NEIGHBORHOODS)
-    adjacency_aggfuncs: tuple[str, ...] = tuple(DENSITY_ADJACENCY_AGGFUNCS)
-    distance_aggfuncs: tuple[str, ...] = tuple(DENSITY_DISTANCE_AGGFUNCS)
+    params: DensityParams = DensityParams()
 
     @field_validator("labelss", "delaunay_mask_labels", mode="before")
     def _package_singletons(cls, val):
         return _make_iterable(val)
 
-    def _parse_resource_star_expressions(self, roi: Roi) -> "IntensityQueries":
-        return DensityQueries(
+    def _parse_resource_star_expressions(self, roi: Roi) -> "DensityQueriesParser":
+        return DensityQueriesParser(
             labelss=_parse_star_expression(self.labelss, roi.resources["label_images"]),
             delaunay_mask_labels=_parse_star_expression(
                 self.delaunay_mask_labels, roi.resources["label_images"]
             ),
-            **{
-                k: v
-                for k, v in dict(self).items()
-                if k not in ["labelss", "delaunay_mask_labels"]
-            },
+            params=self.params
         )
 
     def _validate_resources(self, roi: Roi) -> Self:
@@ -537,12 +389,6 @@ class DensityQueries(BaseModel):
     def queries(self, roi: Roi) -> list[DensityQuery]:
         parsed_request = self._parse_resource_star_expressions(roi)
         valid_request = parsed_request._validate_resources(roi)
-
-        params = {
-            k: v
-            for k, v in dict(self).items()
-            if k not in ["labelss", "delaunay_mask_labels"]
-        }
         qs = []
         for labels, delaunay_mask_label in product(
             valid_request.labelss, valid_request.delaunay_mask_labels
@@ -551,25 +397,22 @@ class DensityQueries(BaseModel):
                 DensityQuery(
                     label_image=labels,
                     delaunay_mask_label=delaunay_mask_label,
-                    **params,
+                    params=self.params,
                 )
             )
         return qs
 
 
-
-
-
-class FeatureQueries(BaseModel):
+class FeatureQueriesParser(BaseModel):
     hierarchy: tuple[HierarchyQuery, ...] = Field(default_factory=tuple)
-    label: tuple[LabelQueries, ...] = Field(default_factory=tuple)
-    intensity: tuple[IntensityQueries, ...] = Field(default_factory=tuple)
-    correlation: tuple[CorrelationQueries, ...] = Field(default_factory=tuple)
-    distance: tuple[DistanceQueries, ...] = Field(default_factory=tuple)
-    density: tuple[DensityQueries, ...] = Field(default_factory=tuple)
+    label: tuple[LabelQueriesParser, ...] = Field(default_factory=tuple)
+    intensity: tuple[IntensityQueriesParser, ...] = Field(default_factory=tuple)
+    correlation: tuple[ColocalizationQueriesParser, ...] = Field(default_factory=tuple)
+    distance: tuple[DistanceQueriesParser, ...] = Field(default_factory=tuple)
+    density: tuple[DensityQueriesParser, ...] = Field(default_factory=tuple)
 
-    def parse_star_expressions(self, roi: Roi) -> "FeatureQueries":
-        return FeatureQueries(
+    def parse_star_expressions(self, roi: Roi) -> "FeatureQueriesParser":
+        return FeatureQueriesParser(
             hiearchy=self.hierarchy,
             label=(e._parse_resource_star_expressions(roi) for e in self.label),
             intensity=(e._parse_resource_star_expressions(roi) for e in self.intensity),
@@ -658,7 +501,7 @@ class SiteFeatureExtractionParams(BaseModel):
     roi_path: Path
     output_path: Path
     level: int
-    features: FeatureQueries
+    features: FeatureQueriesParser
     intensity_correction: IntensityCorrection
 
     def validate_parameters_with(self, roi: Roi) -> "SiteFeatureExtractionParams":
@@ -674,7 +517,7 @@ class FeatureExtractionParams(BaseModel):
     image_dir: str | None
     output_dir: str = "features"
     level: int
-    features: FeatureQueries
+    features: FeatureQueriesParser
     intensity_correction: IntensityCorrection
     image_path: Path | None = Field(default=None, validate_default=True)
     output_path: Path | None = Field(default=None, validate_default=True)

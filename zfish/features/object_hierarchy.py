@@ -1,12 +1,17 @@
 # %%
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import polars as pl
+from pydantic import BaseModel
 from skimage.measure import regionprops
 
+from zfish.features.feature_types import Resources
+from zfish.features.queries import FeatureQuery
 from zfish.features.types import LabelImage, MultichannelLabelImage, SpatialImage
 
+if TYPE_CHECKING:
+    from zfish.roi.spatial_roi import Roi
 # HIERARCHY = {
 #     "emb": (),
 #     "cell": ("emb",),
@@ -15,6 +20,27 @@ from zfish.features.types import LabelImage, MultichannelLabelImage, SpatialImag
 #     "cyto": ("cell", "emb"),
 #     "loc": ("nuc", "cell", "emb"),
 # }
+class HierarchyQuery(BaseModel, FeatureQuery):
+    label_image: str
+    parent_label_images: tuple[str, ...]
+
+    @property
+    def resources(self) -> Resources:
+        return Resources(label_images=(self.label_image,) + self.parent_label_images)
+
+    def load_resources(self, roi: "Roi") -> dict[str, Any]:
+        return {
+            "label_image": roi.sel(l=self.label_image).drop_dim("c").labels.compute(),
+            "parent_label_images": roi.sel(l=list(self.parent_label_images))
+            .drop_dim("c")
+            .labels.compute(),
+        }
+
+    def compute(self, roi: "Roi") -> "pl.DataFrame":
+        from zfish.features.object_hierarchy import get_parent_objects
+
+        return get_parent_objects(**self.load_resources(roi))
+
 
 
 def parent_label(lbl: np.array, lbl2: np.array):

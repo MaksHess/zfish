@@ -1,45 +1,55 @@
-from typing import TYPE_CHECKING, Literal
+# %%
+from dataclasses import asdict
+from typing import TYPE_CHECKING, Any, Literal
 
 import polars as pl
+from pydantic import BaseModel
 
-from zfish.features.neighborhood import aggregation_functions as agg_funcs
+from zfish.features.constants import DensityParams
+from zfish.features.neighborhood import aggregation_functions
 from zfish.features.neighborhood.neighborhoods import NeighborhoodQueryObject
+from zfish.features.queries import FeatureQuery
 
 if TYPE_CHECKING:
     from zfish.features.types import LabelImage
+    from zfish.roi.spatial_roi import Roi
 
-RADIUS_NEIGHBORHOODS = tuple([10, 20, 30, 40, 50, 80, 100, 150, 200, 250])
-RADIUS_AGGFUNCS = tuple([agg_funcs.Count])
 
-DISTANCE_TO_CLOSEST_NEIGHBOR = True
+class DensityQuery(BaseModel, FeatureQuery):
+    label_image: str
+    delaunay_mask_label: str | None = None
+    params: DensityParams = DensityParams()
 
-KNN_DISTANCE_NEIGHBORHOODS = tuple([2, 5, 10, 20, 50, 100, 200])
-KNN_AGGFUNCS = tuple([agg_funcs.Mean, agg_funcs.Max])
+    def load_resources(self, roi: "Roi") -> dict[str, Any]:
+        return {
+            "label_image": roi.sel(l=self.label_image).drop_dim("c").labels.compute(),
+            "delaunay_mask_label": None
+            if self.delaunay_mask_label is None
+            else roi.sel(l=self.delaunay_mask_label).drop_dim("c").labels.compute(),
+            **asdict(self.params),
+        }
 
-DELAUNAY_NEIGHBORHOODS = tuple([1])
-DELAUNAY_AGGFUNCS = tuple([agg_funcs.Count])
+    def compute(self, roi: "Roi") -> "pl.DataFrame":
+        return get_density_features(**self.load_resources(roi))
 
-TOUCH_NEIGHBORHOODS = tuple([1])
-TOUCH_AGGFUNCS = tuple([agg_funcs.Count])
-
-DISTANCE_AGGFUNCS = tuple([agg_funcs.Mean, agg_funcs.Max])
-ADJACENCY_AGGFUNCS = tuple([agg_funcs.Count])
-
+default_params = DensityParams()
 
 def get_density_features(
     label_image: "LabelImage",
     delaunay_mask_label: "LabelImage | None" = None,
-    radius: tuple[float, ...] = RADIUS_NEIGHBORHOODS,
-    knn_distance: tuple[int, ...] = KNN_DISTANCE_NEIGHBORHOODS,
-    distance_to_closest_neighbor: bool = True,
-    delaunay: tuple[int, ...] = DELAUNAY_NEIGHBORHOODS,
-    touch: tuple[int, ...] = TOUCH_NEIGHBORHOODS,
-    distance_aggfuncs: tuple[int, ...] = DISTANCE_AGGFUNCS,
-    adjacency_aggfuncs: tuple[int, ...] = ADJACENCY_AGGFUNCS,
+    radius: tuple[float, ...] = default_params.radius,
+    knn_distance: tuple[int, ...] = default_params.knn_distance,
+    distance_to_closest_neighbor: bool = default_params.distance_to_closest_neighbor,
+    delaunay: tuple[int, ...] = default_params.delaunay,
+    touch: tuple[int, ...] = default_params.touch,
+    distance_aggfuncs: tuple[int, ...] = default_params.distance_aggfuncs,
+    adjacency_aggfuncs: tuple[int, ...] = default_params.adjacency_aggfuncs,
     index_columns: tuple[Literal["label", "label_image"], ...] = ("label",),
 ) -> "pl.DataFrame":
     nq = NeighborhoodQueryObject.from_labelimage(label_image, delaunay_mask_label)
     results = []
+    distance_aggfuncs = [getattr(aggregation_functions, f) for f in distance_aggfuncs]
+    adjacency_aggfuncs = [getattr(aggregation_functions, f) for f in adjacency_aggfuncs]
 
     # Compute object counts in radius
     results.append(
@@ -48,11 +58,11 @@ def get_density_features(
         )
     )
 
+    # Compute distance to closest neighbor
     if distance_to_closest_neighbor:
-        # Compute distance to closest neighbor
         results.append(
             nq.knn(k=1, self_loops=False, distance=True).aggregate_weights(
-                agg_funcs.Max
+                aggregation_functions.Max
             )
         )
 
@@ -77,11 +87,11 @@ def get_density_features(
         results,
         how="horizontal",
     )
-    
+
     if "label" in index_columns:
         df = df.with_columns(nq.label.select(pl.col("label")))
-        
+
     if "label_image" in index_columns:
-        df = df.with_columns(pl.lit(label_image['l'].item()).alias("label_image"))
+        df = df.with_columns(pl.lit(label_image["l"].item()).alias("label_image"))
 
     return df.select(pl.col(index_columns), pl.exclude(index_columns))

@@ -1,11 +1,23 @@
 # %%
 from functools import partial
-from typing import Callable
+from typing import TYPE_CHECKING, Any, NamedTuple
+
+from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from zfish.roi.spatial_roi import Roi
 
 import itk
 import polars as pl
 
 from zfish.features._base import get_si_features_df
+from zfish.features.constants import (
+    DefaultDistanceFeature,
+    DefaultDistanceFunction,
+    DistanceFeature,
+    DistanceFunction,
+)
+from zfish.features.queries import FeatureQuery
 from zfish.features.types import (
     BinaryImage,
     DistanceTransform,
@@ -13,29 +25,20 @@ from zfish.features.types import (
     SpatialImage,
 )
 
-DISTANCE_ITK_FEATURES = {
-    "Centroid",  # CentroidDistance
-    "Maximum",  # MaximumDistance
-    "Minimum",  # MinimumDistance
-    "Median",  # MedianDistance
-    "MaximumIndex",  # ClosestPixel
-    "MinimumIndex",  # FurthestPixel
-}
-
 
 def _distance_to_border(mask: BinaryImage) -> DistanceTransform:
-    lbl_dim = 'l'
+    lbl_dim = "l"
     dt = itk.signed_maurer_distance_map_image_filter(mask, inside_is_positive=True)
-    dt.coords['c'] = mask[lbl_dim].item()
+    dt.coords["c"] = mask[lbl_dim].item()
     return dt
 
 
 def _distance_along_axis(mask: BinaryImage, axis: str = "z") -> DistanceTransform:
     sum_along_axis: SpatialImage = mask.cumsum(axis) * mask.meta.scale_dict[axis]
-    return sum_along_axis.rename({'l': 'c'})
+    return sum_along_axis.rename({"l": "c"})
 
 
-DISTANCE_TRANSFORMS = {
+DISTANCE_FUNCTIONS = {
     "DistanceToBorder": _distance_to_border,
     "DistanceAlongZ": _distance_along_axis,
     "DistanceAlongY": partial(_distance_along_axis, axis="y"),
@@ -43,25 +46,51 @@ DISTANCE_TRANSFORMS = {
 }
 
 
-def _get_mask(lbl_img: LabelImage, lbl: int, lbl_dim: str = 'l') -> BinaryImage:
+def _get_mask(lbl_img: LabelImage, lbl: int, lbl_dim: str = "l") -> BinaryImage:
     mask = (lbl_img == lbl).astype(lbl_img.dtype)
     label_name = lbl_img[lbl_dim].item()
     mask.coords[lbl_dim] = f"{label_name}-{lbl}"
     return mask
 
 
+class LabelObject(NamedTuple):
+    label_image: str
+    label_id: int
+
+
+class DistanceQuery(BaseModel, FeatureQuery):
+    label_image: str
+    label_object_to: LabelObject
+    features: tuple[DistanceFeature, ...] = tuple(DefaultDistanceFeature)
+    distance_transforms: tuple[DistanceFunction, ...] = tuple(DefaultDistanceFunction)
+
+    def load_resources(self, roi: "Roi") -> dict[str, Any]:
+        return {
+            "label_image": roi.sel(l=self.label_image).drop_dim("c").labels.compute(),
+            "label_image_to": roi.sel(l=self.label_object_to.label_image)
+            .drop_dim("c")
+            .labels.compute(),
+            "label_to": self.label_object_to.label_id,
+            "features": self.features,
+            "distance_transforms": self.distance_transforms,
+        }
+
+    def compute(self, roi: "Roi") -> "pl.DataFrame":
+        return get_distance_features(**self.load_resources(roi))
+
+
 def get_distance_features(
     label_image: LabelImage,
     label_image_to: LabelImage,
     label_to: int,
-    distance_transforms: tuple[str, ...] = tuple(DISTANCE_TRANSFORMS.keys()),
-    features: tuple[str, ...] = DISTANCE_ITK_FEATURES,
-    lbl_dim: str = 'l',
+    distance_transforms: tuple[DistanceFunction, ...] = tuple(DefaultDistanceFunction),
+    features: tuple[DistanceFeature, ...] = tuple(DefaultDistanceFeature),
+    lbl_dim: str = "l",
     named_features: bool = True,
     object_column: bool = False,
     struct_index: bool = False,
 ):
-    distance_functions = {k: DISTANCE_TRANSFORMS[k] for k in distance_transforms}
+    distance_transforms = {k: DISTANCE_FUNCTIONS[str(k)] for k in distance_transforms}
     if struct_index:
         index = "index"
     elif object_column:
@@ -71,7 +100,7 @@ def get_distance_features(
     mask = _get_mask(label_image_to, label_to, lbl_dim=lbl_dim)
 
     dfs = []
-    for name, distance_function in distance_functions.items():
+    for name, distance_function in distance_transforms.items():
         try:
             dt = distance_function(mask)
         except ValueError as e:
@@ -109,6 +138,7 @@ def _lookup_physical_point(point: pl.Series, image: DistanceTransform):
     return image.sel(method="nearest", **point).item()
 
 
+# get_distance_features()
 # def get_mask_itk(lbl_img: itk.Image, lbl: int) -> itk.Image:
 #     mask = itk.image_duplicator(lbl_img)
 #     mask_np_view = itk.GetArrayViewFromImage(mask)

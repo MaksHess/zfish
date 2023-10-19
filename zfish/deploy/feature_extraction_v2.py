@@ -9,6 +9,7 @@ from pydantic_yaml import parse_yaml_file_as
 
 import zfish.features.polars_utils as pu
 from zfish.features.feature_extraction_parameters_v2 import FeatureExtractionParams
+from zfish.features.queries import FeatureQuery
 from zfish.roi.spatial_roi import Roi, apply_z_decay_models_to_roi, read_models
 
 logger = logging.getLogger(__name__)

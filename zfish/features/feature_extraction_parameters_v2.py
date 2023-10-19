@@ -463,10 +463,10 @@ class FeatureQueriesParser(BaseModel):
 
 
 class IntensityCorrection(BaseModel):
-    t_decay_models: Path | None
-    z_decay_models: Path | None
+    z_decay_add_model_name_to_feature_path: bool = True
+    t_decay_models: Path | None = None
+    z_decay_models: Path | None = None
     z_decay_two_step_label: str | None = None
-    z_decay_add_model_name_to_feature_path: bool = False
     z_decay_default_models: Path | None = None
 
 

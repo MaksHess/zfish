@@ -34,7 +34,9 @@ def main():
     else:
         fld = params.root
     print(fld)
-    n = len(list(Path(fld).glob('*.h5')))
+    fns = list(Path(fld).glob('*.h5'))
+    fns = [fns[i] for i in [6, 72, 97, 103, 104, 121, 185]]
+    n = len(fns)
     array_task_id = n - 1
 
     command = SLURM_COMMAND.format(array_task_id, args.feature_extraction_params)

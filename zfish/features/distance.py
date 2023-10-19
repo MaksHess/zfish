@@ -55,7 +55,7 @@ def _get_mask(lbl_img: LabelImage, lbl: int, lbl_dim: str = "l") -> BinaryImage:
 
 class LabelObject(NamedTuple):
     label_image: str
-    label_id: int
+    label: int
 
 
 class DistanceQuery(BaseModel, FeatureQuery):
@@ -70,7 +70,7 @@ class DistanceQuery(BaseModel, FeatureQuery):
             "label_image_to": roi.sel(l=self.label_object_to.label_image)
             .drop_dim("c")
             .labels.compute(),
-            "label_to": self.label_object_to.label_id,
+            "label_to": self.label_object_to.label,
             "features": self.features,
             "distance_transforms": self.distance_transforms,
         }

@@ -3,7 +3,7 @@ from collections.abc import Iterable
 from functools import reduce
 from itertools import chain, product, repeat
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from pydantic import BaseModel, Field, field_validator
 from typing_extensions import Self
@@ -402,7 +402,7 @@ class DensityQueriesParser(BaseModel):
                 )
             )
         return qs
-
+    
 
 class FeatureQueriesParser(BaseModel):
     hierarchy: tuple[HierarchyQuery, ...] = Field(default_factory=tuple)
@@ -414,7 +414,7 @@ class FeatureQueriesParser(BaseModel):
 
     def parse_star_expressions(self, roi: Roi) -> "FeatureQueriesParser":
         return FeatureQueriesParser(
-            hiearchy=self.hierarchy,
+            hierarchy=self.hierarchy,
             label=(e._parse_resource_star_expressions(roi) for e in self.label),
             intensity=(e._parse_resource_star_expressions(roi) for e in self.intensity),
             correlation=(
@@ -458,6 +458,7 @@ class FeatureQueriesParser(BaseModel):
                     self.density,
                 )
             ],
+            []
         )
 
 

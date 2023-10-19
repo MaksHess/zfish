@@ -474,11 +474,22 @@ class Roi(abc.Mapping):
     # TODO: Make sure the right kwargs are passed on (currently none).
     # TODO: Refactor the following functions DRY
     # TODO: .pick to extract a single element from a categorical dim.
-    def pick(self, **kwargs) -> "Element":
+    def take(self, **kwargs) -> "Element":
         """
-        Extract element from roi.
+        Extract element from roi returning the underlying datastructure.
         """
-        raise NotImplementedError()
+        print(kwargs)
+        if len(kwargs.keys()) > 1:
+            raise ValueError(f"Can only take one element type at the time: {kwargs.keys()}")
+        dim, coords = list(kwargs.items())[0]
+        if dim=='l':
+            return self.labels.sel(**kwargs)
+        elif dim == 'c':
+            return self.images.sel(**kwargs)
+        elif dim == 'tables':
+            return self.tables[coords]
+        elif dim == 'feature':
+            return self.table().select(pl.col(coords))
 
     def sel(self, **kwargs) -> "Roi":
         out = dict()
@@ -755,6 +766,19 @@ class Roi(abc.Mapping):
         # rep.extend(coords_repr(self.images.coords, col_width=6).split("\n")[1:])
         return "\n".join(rep)
 
+xr.DataArray(np.arange(27).reshape((3, 3, 3)), coords={'x': np.arange(3), 'y': np.arange(3), 'c': ['a', 'b', 'c']})
+
+@dataclass
+class ResourceQuery:
+    label_images: tuple[str, ...] = field(default_factory=tuple)
+    channels: tuple[str, ...] = field(default_factory=tuple)
+
+def load_resource(query: ResourceQuery, roi: Roi) -> dict[str, Element]:
+    result = {}
+    for l in query.label_images:
+        result[l] = roi.sel(l=l).drop_dim('c').labels.compute()
+    for c in query.channels:
+        result[c] = roi.sel(c=c).drop_dim('l').images.compute()
 
 def apply_z_decay_models_to_roi(
     models: Mapping[str, Model | None] | None,

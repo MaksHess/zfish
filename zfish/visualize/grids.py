@@ -1,3 +1,4 @@
+# %%
 import warnings
 from functools import partial
 from itertools import product, repeat
@@ -92,14 +93,21 @@ def square_grid(sites: pd.Series, left_to_right=True):
 
 def arrange_on_grid(
     raw_imgs: dict[str, NDArray],
-    order: pd.Series,
+    order: pd.Series| list | None = None,
     index_function: Callable[[NDArray], pd.DataFrame] = rect_grid,
     margin_px: int = 10,
 ) -> NDArray:
+    
+    if order is None:
+        order = pd.Series(np.arange(len(raw_imgs.keys())), index=list(raw_imgs.keys()))
+    if isinstance(order, list):
+        order = pd.Series(order, index=list(raw_imgs.keys()))
+        
     embs = list(set(raw_imgs.keys()).intersection(set(order.index)))
     order = order.loc[embs]
     imgs = {k: v for k, v in raw_imgs.items() if k in embs}
-
+    print(embs)
+    print(imgs)
     dtype = imgs[list(imgs.keys())[0]].dtype
     max_extent = np.array([img.shape for img in imgs.values()]).max(axis=0)
     print(max_extent)
@@ -163,7 +171,7 @@ def arrange_in_buckets(
     raw_imgs: dict[str, NDArray],
     meta: pd.DataFrame,
     group_by: str,
-    sort_by: str = None,
+    sort_by: str | None = None,
     outer_index_function: Callable[[NDArray], pd.DataFrame] = square_grid,
     outer_margin: int = 100,
     inner_index_function: Callable[[NDArray], pd.DataFrame] = square_grid,
@@ -175,10 +183,14 @@ def arrange_in_buckets(
 
     canvas_imgs = {}
     for bucket, bucket_meta in meta.groupby(group_by):
+        print(bucket)
+        print(bucket_meta)
         if sort_by is None:
             sorter = pd.Series(index=bucket_meta.index, dtype=float)
         else:
             sorter = bucket_meta[sort_by]
+        print(imgs)
+        print(sorter)
         canvas_imgs[bucket] = arrange_on_grid(
             imgs, sorter, index_function=inner_index_function, margin_px=inner_margin
         )

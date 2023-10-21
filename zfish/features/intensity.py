@@ -8,7 +8,7 @@ from strenum import PascalCaseStrEnum
 from zfish.features._base import get_si_features_df
 from zfish.features.constants import IntensityFeature
 from zfish.features.queries import FeatureQuery
-from zfish.features.types import LabelImage, SpatialImage
+from zfish.features.typing import LabelImage, SpatialImage
 
 if TYPE_CHECKING:
     import polars as pl

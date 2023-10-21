@@ -7,11 +7,12 @@ from collections import defaultdict
 from pprint import pformat
 
 import polars as pl
+import pydantic
 from pydantic import BaseModel
 from pydantic_yaml import parse_yaml_file_as, to_yaml_str
 
 import zfish.features.polars_utils as pu
-from zfish.features.feature_extraction_parameters_v2 import FeatureExtractionParams
+from zfish.features.feature_extraction_parameters import FeatureExtractionParams
 from zfish.features.queries import FeatureQuery
 from zfish.roi.spatial_roi import Roi, apply_z_decay_models_to_roi, read_models
 
@@ -32,7 +33,7 @@ err_handler.setFormatter(
 )
 
 out_handler = logging.StreamHandler(sys.stdout)
-out_handler.setLevel("INFO")
+out_handler.setLevel("DEBUG")
 # out_handler.setLevel("DEBUG")
 out_handler.setFormatter(
     logging.Formatter(
@@ -138,7 +139,10 @@ def nested_repr(
     object_, indent=1, width=120, depth=None, compact=True, sort_keys=False
 ):
     if isinstance(object_, BaseModel):
-        dict_ = json.loads(object_.model_dump_json())
+        if pydantic.version.VERSION < '2':
+            dict_ = json.loads(object_.json())
+        else:
+            dict_ = json.loads(object_.model_dump_json())
     else:
         dict_ = object_
 

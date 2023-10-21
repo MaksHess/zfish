@@ -3,7 +3,7 @@ root: "M:\\marvwy\\20220721_ZE4i2_aligned"
 
 image_dir: "imgs"
 
-output_dir: "features_v2"
+output_dir: "features_local_test"
 
 level: 1
 

@@ -4,6 +4,7 @@ from typing import Literal, Sequence
 
 import colorcet as cc
 import polars as pl
+import polars.selectors as cs
 import seaborn as sns
 from polars.type_aliases import JoinStrategy
 from toolz.dicttoolz import valmap
@@ -234,52 +235,6 @@ def join(
     return df
 
 
-def get_metadata(
-    df: pl.DataFrame,
-    structures={"nucleiRaw3": "nuc_count"},
-    control_wells: list[str] | None = None,
-) -> pl.DataFrame:
-    structure_names = list(structures.keys())
-    structures_to_drop = [
-        e
-        for e in list(df.select(pl.col("object")).to_series().cast(pl.Utf8).unique())
-        if e not in structure_names
-    ]
-
-    df_meta = (
-        df
-        # .pipe(show)
-        .filter(pl.col("object").is_in(structure_names))
-        .groupby(["roi", "object"])
-        .agg([pl.col("roi").count().alias("_count")])
-        # .pipe(show)
-        .pivot(values="_count", index="roi", columns="object")
-        # .pipe(show)
-        .rename(structures)
-        .with_columns(pl.col("nuc_count").log(base=2).cast(pl.Float32).prefix("log2_"))
-        .with_columns(pl.col("log2_nuc_count").round(0).cast(pl.UInt16).alias("cycle"))
-        .with_columns(pl.col("roi").str.split("_").alias("parts"))
-        .with_columns(
-            [
-                pl.col("parts").list.first().alias("well"),
-                pl.col("parts")
-                .list.slice(1)
-                .list.join("_")
-                .alias("site"),
-            ]
-        )
-        .drop("parts")
-    )
-    if control_wells is not None:
-        df_meta = df_meta.with_columns(
-            [
-                pl.col("well").is_in(control_wells).alias("is_control_well"),
-                pl.col("well")
-                .apply(lambda x: control_wells.index(x) if x in control_wells else 1000)
-                .alias("control_well_for_acquisition"),
-            ]
-        )
-    return df_meta
 
 
 def _split_feature_name(columns: list[str], sep="_") -> dict[str, dict[str, str]]:

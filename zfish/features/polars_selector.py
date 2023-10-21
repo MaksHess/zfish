@@ -16,128 +16,6 @@ if TYPE_CHECKING:
     from polars.type_aliases import SelectorType
     
 
-# def copy_signature(instance, attribute, value):
-
-#     if value >= instance.y:
-
-#         raise ValueError("'x' has to be smaller than 'y'!")
-
-# ALIASES = {
-# }
-
-# class_attrs = {}
-
-# for func_name in cs.__all__:
-#     func = getattr(cs, func_name)
-#     if callable(func):
-#         print(func_name)
-#         annotations = inspect.get_annotations(func)
-#         match annotations:
-#             case {'return': 'SelectorType'}:
-#                 class_attrs[ALIASES.get(func_name, func_name)] = field(default=func)
-#             case _:
-#                 print('_')
-#         print()
-
-
-# SelectorClass = attrs.make_class('SelectorClass', class_attrs, repr=True)
-
-
-class _Selector:
-    """Easy access to polars columns.
-    """
-    @staticmethod
-    @forge.copy(cs.all)
-    def all() -> "SelectorType":
-        return cs.all()
-    
-    @staticmethod
-    @forge.copy(cs.by_dtype)
-    def dtype(*args, **kwargs) -> "SelectorType":
-        return cs.by_dtype(*args, **kwargs)
-
-    @staticmethod
-    @forge.copy(cs.by_name)
-    def name(*args, **kwargs) -> "SelectorType":
-        return cs.by_name(*args, **kwargs)
-
-    @staticmethod
-    @forge.copy(cs.contains)
-    def contains(*args, **kwargs) -> "SelectorType":
-        return cs.contains(*args, **kwargs)
-
-    @staticmethod
-    @forge.copy(cs.datetime)
-    def datetime(*args, **kwargs) -> "SelectorType":
-        return cs.datetime(*args, **kwargs)
-    
-    @staticmethod
-    @forge.copy(cs.duration)
-    def duration(*args, **kwargs) -> "SelectorType":
-        return cs.duration(*args, **kwargs)
-
-    @staticmethod
-    @forge.copy(cs.ends_with)
-    def ends_with(*args, **kwargs) -> "SelectorType":
-        return cs.ends_with(*args, **kwargs)
-
-    @staticmethod
-    @forge.copy(cs.first)
-    def first(*args, **kwargs) -> "SelectorType":
-        return cs.first(*args, **kwargs)
-
-    @staticmethod
-    @forge.copy(cs.float)
-    def float(*args, **kwargs) -> "SelectorType":
-        return cs.float(*args, **kwargs)
-
-    @staticmethod
-    @forge.copy(cs.integer)
-    def integer(*args, **kwargs) -> "SelectorType":
-        return cs.integer(*args, **kwargs)
-
-    @staticmethod
-    @forge.copy(cs.last)
-    def last(*args, **kwargs) -> "SelectorType":
-        return cs.last(*args, **kwargs)
-
-    @staticmethod
-    @forge.copy(cs.matches)
-    def matches(*args, **kwargs) -> "SelectorType":
-        return cs.matches(*args, **kwargs)
-
-    @staticmethod
-    @forge.copy(cs.numeric)
-    def numeric() -> "SelectorType":
-        return cs.numeric()
-
-    @staticmethod
-    @forge.copy(cs.starts_with)
-    def starts_with(*args, **kwargs) -> "SelectorType":
-        return cs.starts_with(*args, **kwargs)
-
-    @staticmethod
-    @forge.copy(cs.temporal)
-    def temporal() -> "SelectorType":
-        return cs.temporal()
-
-    @staticmethod
-    @forge.copy(cs.string)
-    def string(*args, **kwargs) -> "SelectorType":
-        return cs.string(*args, **kwargs)
-
-    @staticmethod
-    def cat() -> "SelectorType":
-        return cs.string(include_categorical=True)
-
-    @staticmethod
-    @forge.copy(pl.col)
-    def __call__(*args, **kwargs) -> "Expr":
-        return pl.col(*args, **kwargs)
-
-col = _Selector()
-
-
 INDEX_PATTERN = r"^_?(?P<index>[a-z0-9]+(?:_[a-z0-9]+)*)$"  # 'snake_case` and `nonumbers`, `_can_start` !lowercase
 ACTIVE_INDEX_PATTERN = r"^(?P<index>[a-z0-9]+(?:_[a-z0-9]+)*)$"
 INACTIVE_INDEX_PATTERN = r"^_(?P<index>[a-z0-9]+(?:_[a-z0-9]+)*)$"
@@ -153,7 +31,7 @@ CHANNEL_PATTERN = (
 )
 CHANNEL_SET_PATTERN = f"({CHANNEL_PATTERN})(\\|({CHANNEL_PATTERN}))+"  # 'DAPI.0|DAPI.1|DAPI.2', 'pH3.0|pH3.40'
 OBJECT_PATTERN = r"(([a-zA-Z0-9]*)-(\d+))"  # `camelCase-1` and `canHaveNumbers3-14` !no `_` or `-` !lowercase
-
+HIERARCHY_PATTERN = r"parent\..*"
 
 LABEL_FEATURE_PATTERN = f"^{FEATURE_PATTERN}$"
 INTENSITY_FEATURE_PATTERN = f"^{CHANNEL_PATTERN}_{FEATURE_PATTERN}$"
@@ -166,6 +44,7 @@ class FeatureSelector:
     intensity: "SelectorType" = cs.matches(INTENSITY_FEATURE_PATTERN)
     corr: "SelectorType" = cs.matches(CORR_FEATURE_PATTERN)
     dist: "SelectorType" = cs.matches(DIST_FEATURE_PATTERN)
+    density: "SelectorType" = cs.matches('DELAUNAY:\d_') | cs.matches('TOUCH:\d_') | cs.matches('RAD:\d+(\.\d+)?') | cs.matches('^KNNd:\d+_')
     def __call__(self) -> "SelectorType":
         return cast("SelectorType", self.label | self.intensity | self.corr | self.dist)
 
@@ -212,7 +91,7 @@ class Selector:
     channel_pair: ChannelPairSelector = ChannelPairSelector()
     
     @staticmethod
-    @forge.copy(pl.col)
+    # @forge.copy(pl.col)
     def __call__(*args, **kwargs) -> "Expr":
         return pl.col(*args, **kwargs)
     
@@ -301,7 +180,142 @@ class Selector:
         return cs.string(include_categorical=True)
 
 
-sel = Selector()
+# sel = Selector()
+
+@define(frozen=True)
+class MySelector:
+    index: "SelectorType" = cs.matches('^roi$') | cs.matches('parent\.') | cs.matches('^object$') | cs.matches('^label$')
+    label: "SelectorType" = FeatureSelector().label
+    intensity: "SelectorType" = FeatureSelector().intensity
+    correlation: "SelectorType" = FeatureSelector().corr
+    distance: "SelectorType" = FeatureSelector().dist
+    density: "SelectorType" = FeatureSelector().density
+    
+sel = MySelector()
+    
+# def copy_signature(instance, attribute, value):
+
+#     if value >= instance.y:
+
+#         raise ValueError("'x' has to be smaller than 'y'!")
+
+# ALIASES = {
+# }
+
+# class_attrs = {}
+
+# for func_name in cs.__all__:
+#     func = getattr(cs, func_name)
+#     if callable(func):
+#         print(func_name)
+#         annotations = inspect.get_annotations(func)
+#         match annotations:
+#             case {'return': 'SelectorType'}:
+#                 class_attrs[ALIASES.get(func_name, func_name)] = field(default=func)
+#             case _:
+#                 print('_')
+#         print()
+
+
+# SelectorClass = attrs.make_class('SelectorClass', class_attrs, repr=True)
+
+
+# class _Selector:
+#     """Easy access to polars columns.
+#     """
+#     @staticmethod
+#     @forge.copy(cs.all)
+#     def all() -> "SelectorType":
+#         return cs.all()
+    
+#     @staticmethod
+#     @forge.copy(cs.by_dtype)
+#     def dtype(*args, **kwargs) -> "SelectorType":
+#         return cs.by_dtype(*args, **kwargs)
+
+#     @staticmethod
+#     @forge.copy(cs.by_name)
+#     def name(*args, **kwargs) -> "SelectorType":
+#         return cs.by_name(*args, **kwargs)
+
+#     @staticmethod
+#     @forge.copy(cs.contains)
+#     def contains(*args, **kwargs) -> "SelectorType":
+#         return cs.contains(*args, **kwargs)
+
+#     @staticmethod
+#     @forge.copy(cs.datetime)
+#     def datetime(*args, **kwargs) -> "SelectorType":
+#         return cs.datetime(*args, **kwargs)
+    
+#     @staticmethod
+#     @forge.copy(cs.duration)
+#     def duration(*args, **kwargs) -> "SelectorType":
+#         return cs.duration(*args, **kwargs)
+
+#     @staticmethod
+#     @forge.copy(cs.ends_with)
+#     def ends_with(*args, **kwargs) -> "SelectorType":
+#         return cs.ends_with(*args, **kwargs)
+
+#     @staticmethod
+#     @forge.copy(cs.first)
+#     def first(*args, **kwargs) -> "SelectorType":
+#         return cs.first(*args, **kwargs)
+
+#     @staticmethod
+#     @forge.copy(cs.float)
+#     def float(*args, **kwargs) -> "SelectorType":
+#         return cs.float(*args, **kwargs)
+
+#     @staticmethod
+#     @forge.copy(cs.integer)
+#     def integer(*args, **kwargs) -> "SelectorType":
+#         return cs.integer(*args, **kwargs)
+
+#     @staticmethod
+#     @forge.copy(cs.last)
+#     def last(*args, **kwargs) -> "SelectorType":
+#         return cs.last(*args, **kwargs)
+
+#     @staticmethod
+#     @forge.copy(cs.matches)
+#     def matches(*args, **kwargs) -> "SelectorType":
+#         return cs.matches(*args, **kwargs)
+
+#     @staticmethod
+#     @forge.copy(cs.numeric)
+#     def numeric() -> "SelectorType":
+#         return cs.numeric()
+
+#     @staticmethod
+#     @forge.copy(cs.starts_with)
+#     def starts_with(*args, **kwargs) -> "SelectorType":
+#         return cs.starts_with(*args, **kwargs)
+
+#     @staticmethod
+#     @forge.copy(cs.temporal)
+#     def temporal() -> "SelectorType":
+#         return cs.temporal()
+
+#     @staticmethod
+#     @forge.copy(cs.string)
+#     def string(*args, **kwargs) -> "SelectorType":
+#         return cs.string(*args, **kwargs)
+
+#     @staticmethod
+#     def cat() -> "SelectorType":
+#         return cs.string(include_categorical=True)
+
+#     @staticmethod
+#     @forge.copy(pl.col)
+#     def __call__(*args, **kwargs) -> "Expr":
+#         return pl.col(*args, **kwargs)
+
+# col = _Selector()
+
+
+
 # # %%
 # sel.index() | sel.feature() - cs.by_dtype(pl.Int64)
 # # %%

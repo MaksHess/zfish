@@ -75,7 +75,7 @@ class Parameters:
 
     theta_dist: float = 20.0
     theta_time: float = 5.0
-    dist_thresh: float = 40.0
+    dist_thresh: float = 15.0
     time_thresh: float = 2.0
     apop_thresh: float = 5
     segmentation_miss_rate: float = 0.1
@@ -125,18 +125,18 @@ def main():
     parameter_generators = [
         parameter_gen(
             time_thresh=(1.0,),
-            dist_thresh=(15.0, 20.0),
+            dist_thresh=(15.0, 13.0, 12.0),
             update_method=(1, 0)
         ),
         parameter_gen(
-            time_thresh=(1.0, 2.0, 3.0),
+            time_thresh=(1.0, 2.0,),
             dist_thresh=(15.0,),
         ),
-        parameter_gen(
-            lambda_branch=(10.0, 20.0, 40.0, 80.0),
-            dist_thresh=(15.0,),
-            time_thresh=(1.0,),
-        ),
+        # parameter_gen(
+        #     lambda_branch=(10.0, 20.0, 40.0, 80.0),
+        #     dist_thresh=(15.0,),
+        #     time_thresh=(1.0,),
+        # ),
     ]
 
     # Select one parameter file based on slurm array id.

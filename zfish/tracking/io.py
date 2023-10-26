@@ -93,9 +93,7 @@ def load_image(
 
     from zfish.image.image import to_si
 
-    arr_img = zarr.open(
-        r"M:\marvwy\VisiScope\20230329_compressed\20230329-H1-GFP2_s4.zarr"
-    )
+    arr_img = zarr.open(fn)
     img = arr_img[level][...]
     return to_si(img, dims=dims, scale=scale, c_coords=c_coords).squeeze()
 

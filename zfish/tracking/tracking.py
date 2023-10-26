@@ -65,7 +65,7 @@ class Parameters:
     tracking_updates: tuple[str, ...] = ("motion",)  # ("motion", "visual")
     max_search_radius: float = 15
     optimizer_options: dict[str, int] = None
-    
+
     # Motion model
     max_lost: int = 1
 
@@ -83,16 +83,22 @@ class Parameters:
     segmentation_miss_rate: float = 0.1
     apoptosis_rate: float = 0.001
     relax: bool = True
-    
+
     def __post_init__(self):
         if self.optimizer_options is None:
-            self.optimizer_options = {'tm_lim': 6_000_000}
+            self.optimizer_options = {"tm_lim": 6_000_000}
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("idx", type=int)
-    parser.add_argument("-p", "--path_to_input", type=str)
+    parser.add_argument("-i", "--input_path", type=str)
+    parser.add_argument(
+        "-c",
+        "--base_config_path",
+        type=str,
+        default="/data/active/marvwy/VisiScope/20230329_compressed/napari_v2.json",
+    )
     args = parser.parse_args()
 
     output_folder = Path(args.path_to_input).parent / "tracking_results"
@@ -102,15 +108,18 @@ def main():
     tracks_out_file = output_folder / f"{base_name}_{args.idx}_tracks.h5"
     config_out_file = output_folder / f"{base_name}_{args.idx}_config.json"
 
-    base_config = btrack.config.load_config(
-        r"/data/active/marvwy/VisiScope/20230329_compressed/napari_v2.json"
-    )
-    
+    # Load base configuration (most of it overwritten in this script!).
+    base_config = btrack.config.load_config(args.base_config_path)
+
+    # Load features & generate tracking objects.
     df = (
-        load_features(args.path_to_input).select(['t', 'z', 'y', 'x'] + FEATURES).with_columns(pl.lit(1).alias('Constant'))
+        load_features(args.path_to_input)
+        .select(["t", "z", "y", "x"] + FEATURES)
+        .with_columns(pl.lit(1).alias("Constant"))
     )
     objs = btrack.io.objects_from_array(df.to_numpy(), default_keys=df.columns)
 
+    # Specify the experiment to run using (multiple) parameter_gen.
     parameter_generators = [
         parameter_gen(
             time_thresh=(1.0, 2.0),
@@ -121,15 +130,12 @@ def main():
             dist_thresh=(15.0, 30.0, 90),
         ),
     ]
-    
 
+    # Select one parameter file based on slurm array id.
     all_parameters = list(chain(*parameter_generators))
     parameters = all_parameters[int(args.idx)]
-    
-    print(all_parameters)
-    print()
-    print(parameters)
 
+    # Overwrite parameters in base_config & save the result
     for k, v in asdict(parameters).items():
         if k in TRACKER_CONFIG:
             setattr(base_config, k, v)
@@ -141,25 +147,24 @@ def main():
             continue
         else:
             raise ValueError(f"Unknown argument {k}")
-        
-    with open(config_out_file, 'w') as f:
+
+    with open(config_out_file, "w") as f:
         f.write(base_config.json(indent=2))
-        
 
     with btrack.BayesianTracker() as tracker:
         tracker.configure(base_config)
-    #     # tracker.features = FEATURES
+        #     # tracker.features = FEATURES
         tracker.append(objs)
-    #     tracker.max_lost = 1
-    #     tracker.update_method = BayesianUpdates.APPROXIMATE
-    #     tracker.max_search_radius = 15
-    #     tracker.volume = ((0, 300), (0, 300), (0, 251.0))
-    #     tracker.track(tracking_updates=["motion"])
-    #     hypoth = tracker.optimise(options={"tm_lim": 60_000 * 100})
+        #     tracker.max_lost = 1
+        #     tracker.update_method = BayesianUpdates.APPROXIMATE
+        #     tracker.max_search_radius = 15
+        #     tracker.volume = ((0, 300), (0, 300), (0, 251.0))
+        #     tracker.track(tracking_updates=["motion"])
+        #     hypoth = tracker.optimise(options={"tm_lim": 60_000 * 100})
         if parameters.optimize:
             optimized = tracker.optimise()
-            
-        tracker.export(tracks_out_file, obj_type='obj_type_1')
+
+        tracker.export(tracks_out_file, obj_type="obj_type_1")
 
     #     tracker.export(
     #         r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\tracking\quick2.h5",
@@ -195,5 +200,5 @@ def parameter_gen(
         yield Parameters(**{k: v for k, v in zip(params_set.keys(), value_pair)})
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

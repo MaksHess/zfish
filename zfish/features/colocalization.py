@@ -268,6 +268,8 @@ def get_colocalization_features(
 #                 ]
 #             )
 #     return df.fill_nan(None)
+
+
 # def get_colocalization_features_v3(
 #     label_image: LabelImage,
 #     channel0: SpatialImage,
@@ -291,59 +293,3 @@ def get_colocalization_features(
 #     df.ww.set_index("label")
 
 #     return df
-
-# %%
-if __name__ == "__main__":
-    from zfish.roi.spatial_roi import Roi
-
-    roi = Roi.from_file(
-        r"M:\marvwy\20220721_ZE4i2_aligned\imgs\B02_px+0385_py-0060.h5", level=1
-    )
-
-    lbls = (
-        roi.sel(l=["nucleiRaw3", "cells", "embryoRaw"]).drop_dim("c").compute().labels
-    )
-    nucs = lbls.sel(l="nucleiRaw3")
-    cells = lbls.sel(l="cells")
-    emb = lbls.sel(l="embryoRaw")
-    ch0 = roi.sel(c="DAPI.0").drop_dim("l").compute().images
-    ch1 = roi.sel(c="DAPI.1").drop_dim("l").compute().images
-
-    # %%
-    df_nucs = get_colocalization_features_v2(nucs, ch0, ch1)
-    df_emb = get_colocalization_features_v2(emb, ch0, ch1)
-    df_cells = get_colocalization_features_v2(cells, ch0, ch1)
-    # %%
-    # from zfish.features.object_hierarchy import (
-    #     get_parents_v2,
-    # )
-
-    hierarchy = {
-        "embryoRaw": (),
-        "cells": ("embryoRaw",),
-        "nucleiRaw3": ("cells", "embryoRaw"),
-    }
-
-    nucs_index = get_parents_v2(
-        lbls.sel(l="nucleiRaw3"), lbls.sel(l=list(hierarchy["nucleiRaw3"]))
-    )
-    cells_index = get_parents_v2(
-        lbls.sel(l="cells"), lbls.sel(l=list(hierarchy["cells"]))
-    )
-    emb_index = get_parents_v2(
-        lbls.sel(l="embryoRaw"), lbls.sel(l=list(hierarchy["embryoRaw"]))
-    )
-
-    # df_relation = get_full_object_hierarchy(lbls, raw_hierarchy=hierarchy)
-    # %%
-    nucs_index.join(df_nucs, on="label")
-    cells_index.join(df_cells, on="label")
-    # %%
-    from featuretools import EntitySet
-
-    ds = EntitySet(id="site1", dataframes=[])
-    # %%
-    # df.pipe(pu.nest_structs, sep='\.', pattern_before_sep='resource', pattern_after_sep='.*')
-    df.ww
-    # %%
-    df.ww.describe()

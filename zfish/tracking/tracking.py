@@ -99,10 +99,10 @@ def main():
     )
     args = parser.parse_args()
 
-    output_folder = Path(args.path_to_input).parent / "tracking_results"
+    output_folder = Path(args.input_path).parent / "tracking_results"
     output_folder.mkdir(exist_ok=True)
 
-    base_name = Path(args.path_to_input).stem
+    base_name = Path(args.input_path).stem
     tracks_out_file = output_folder / f"{base_name}_{args.idx}_tracks.h5"
     config_out_file = output_folder / f"{base_name}_{args.idx}_config.json"
 
@@ -111,7 +111,7 @@ def main():
 
     # Load features & generate tracking objects.
     df = (
-        pl.read_parquet(args.path_to_input)
+        pl.read_parquet(args.input_path)
         .select(["t", "z", "y", "x"] + FEATURES)
         .with_columns(pl.lit(1).alias("Constant"))
     )

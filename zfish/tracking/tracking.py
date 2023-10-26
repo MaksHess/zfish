@@ -5,7 +5,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from itertools import chain, product
 from pathlib import Path
-from pprint import pformat
+from pprint import pformat, pprint
 from typing import TypeAlias
 
 import btrack
@@ -108,6 +108,8 @@ def main():
 
     # Load base configuration (most of it overwritten in this script!).
     base_config = btrack.config.load_config(args.base_config_path)
+    
+    pprint(base_config)
 
     # Load features & generate tracking objects.
     df = (
@@ -146,6 +148,8 @@ def main():
         else:
             raise ValueError(f"Unknown argument {k}")
 
+    
+    pprint(base_config)
     with open(config_out_file, "w") as f:
         f.write(base_config.json(indent=2))
 
@@ -157,7 +161,7 @@ def main():
         #     tracker.update_method = BayesianUpdates.APPROXIMATE
         #     tracker.max_search_radius = 15
         #     tracker.volume = ((0, 300), (0, 300), (0, 251.0))
-        #     tracker.track(tracking_updates=["motion"])
+        tracker.track()
         #     hypoth = tracker.optimise(options={"tm_lim": 60_000 * 100})
         if parameters.optimize:
             optimized = tracker.optimise()

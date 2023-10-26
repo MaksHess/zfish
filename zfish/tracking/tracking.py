@@ -58,7 +58,7 @@ class Parameters:
     # Tracker
     optimize: bool = True
     features: tuple[str, ...] = tuple()
-    update_method: BayesianUpdates = BayesianUpdates.APPROXIMATE
+    update_method: BayesianUpdates = 1 # APPROXIMATE: 1, EXACT: 0
     volume: Volume = ((0, 665.6), (0, 665.6), (0, 251.0))
     tracking_updates: tuple[str, ...] = ("motion",)  # ("motion", "visual")
     max_search_radius: float = 15
@@ -84,12 +84,13 @@ class Parameters:
 
     def __post_init__(self):
         if self.optimizer_options is None:
-            self.optimizer_options = {"tm_lim": 6_000_000}
+            self.optimizer_options = {"tm_lim": 60_000}
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("idx", type=int)
+    parser.add_argument("experiment_nr", type=int)
     parser.add_argument("-i", "--input_path", type=str)
     parser.add_argument(
         "-c",
@@ -99,16 +100,17 @@ def main():
     )
     args = parser.parse_args()
 
-    output_folder = Path(args.input_path).parent / "tracking_results"
+    output_folder = Path(args.input_path).parent / "tracking_results" / f"run_{args.experiment_nr}"
     output_folder.mkdir(exist_ok=True)
 
     base_name = Path(args.input_path).stem
     tracks_out_file = output_folder / f"{base_name}_{args.idx}_tracks.h5"
     config_out_file = output_folder / f"{base_name}_{args.idx}_config.json"
+    params_out_file = output_folder / f"{base_name}_{args.idx}_params.json"
 
     # Load base configuration (most of it overwritten in this script!).
     base_config = btrack.config.load_config(args.base_config_path)
-    
+
     pprint(base_config)
 
     # Load features & generate tracking objects.
@@ -122,12 +124,18 @@ def main():
     # Specify the experiment to run using (multiple) parameter_gen.
     parameter_generators = [
         parameter_gen(
-            time_thresh=(1.0, 2.0),
-            dist_thresh=(15.0, 20.0, 30.0, 45.0),
+            time_thresh=(1.0,),
+            dist_thresh=(15.0, 20.0),
+            update_method=(1, 0)
         ),
         parameter_gen(
-            lambda_branch=(20.0, 40.0, 80.0),
-            dist_thresh=(15.0, 30.0, 90),
+            time_thresh=(1.0, 2.0, 3.0),
+            dist_thresh=(15.0,),
+        ),
+        parameter_gen(
+            lambda_branch=(10.0, 20.0, 40.0, 80.0),
+            dist_thresh=(15.0,),
+            time_thresh=(1.0,),
         ),
     ]
 
@@ -148,10 +156,11 @@ def main():
         else:
             raise ValueError(f"Unknown argument {k}")
 
-    
     pprint(base_config)
     with open(config_out_file, "w") as f:
         f.write(base_config.json(indent=2))
+    with open(params_out_file, "w") as f:
+        json.dump(asdict(parameters), f, indent=2)
 
     with btrack.BayesianTracker() as tracker:
         tracker.configure(base_config)

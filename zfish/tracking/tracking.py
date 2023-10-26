@@ -12,8 +12,6 @@ import btrack
 import polars as pl
 from btrack.constants import BayesianUpdates
 
-from zfish.tracking.io import load_features
-
 logger = logging.getLogger(__name__)
 
 Volume: TypeAlias = tuple[tuple[float, float], ...]
@@ -113,7 +111,7 @@ def main():
 
     # Load features & generate tracking objects.
     df = (
-        load_features(args.path_to_input)
+        pl.read_parquet(args.path_to_input)
         .select(["t", "z", "y", "x"] + FEATURES)
         .with_columns(pl.lit(1).alias("Constant"))
     )

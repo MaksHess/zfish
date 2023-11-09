@@ -7,6 +7,8 @@
 *.h5ad
 *.bkup
 *.clf
+*.h5
+*.json
 data/
 
 # Byte-compiled / optimized / DLL files

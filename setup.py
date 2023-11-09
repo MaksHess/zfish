@@ -22,7 +22,7 @@ requirements = [
     "pandas",
     "tqdm",
     "toolz",
-    "napari",
+    "napari[all]",
     "pydantic",
     "pydantic_yaml",
     "spatial_image",
@@ -35,7 +35,8 @@ requirements = [
     "pingouin",
     "numba",
     "python-forge",
-    "strenum"
+    "feature_engine",
+    "strenum",
 ]
 
 test_requirements = []

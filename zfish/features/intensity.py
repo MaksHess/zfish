@@ -8,7 +8,7 @@ from strenum import PascalCaseStrEnum
 from zfish.features._base import get_si_features_df
 from zfish.features.constants import IntensityFeature
 from zfish.features.queries import FeatureQuery
-from zfish.features.typing import LabelImage, SpatialImage
+from zfish.features.types import LabelImage, SpatialImage
 
 if TYPE_CHECKING:
     import polars as pl
@@ -24,7 +24,7 @@ class IntensityQuery(BaseModel, FeatureQuery):
     label_image: str
     channel: str
     features: tuple[IntensityFeature, ...] = Field(
-        default=IntensityFeature, validate_default=True
+        default=tuple(IntensityFeature), validate_default=True
     )
 
     def load_resources(self, roi: "Roi") -> dict[str, Any]:

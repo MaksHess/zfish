@@ -39,18 +39,18 @@ DIST_FEATURE_PATTERN = f"^{OBJECT_PATTERN}_{FEATURE_PATTERN}$"
 
 @attrs.define(frozen=True)
 class FeaturesSelector:
-    label: cs.SelectorType = cs.matches(LABEL_FEATURE_PATTERN)
-    intensity: cs.SelectorType = cs.matches(INTENSITY_FEATURE_PATTERN)
-    corr: cs.SelectorType = cs.matches(CORR_FEATURE_PATTERN)
-    dist: cs.SelectorType = cs.matches(DIST_FEATURE_PATTERN)
+    label: SelectorType = cs.matches(LABEL_FEATURE_PATTERN)
+    intensity: SelectorType = cs.matches(INTENSITY_FEATURE_PATTERN)
+    corr: SelectorType = cs.matches(CORR_FEATURE_PATTERN)
+    dist: SelectorType = cs.matches(DIST_FEATURE_PATTERN)
 
 @attrs.define(frozen=True)
 class MySelector:
-    index: cs.SelectorType = cs.matches(INDEX_PATTERN)
-    active_index: cs.SelectorType = cs.matches(ACTIVE_INDEX_PATTERN)
-    inactive_index: cs.SelectorType = cs.matches(INACTIVE_INDEX_PATTERN)
-    object_index: cs.SelectorType = cs.by_name(OBJECT_INDEX)
-    object_meta: cs.SelectorType = cs.by_name(OBJECT_META)
+    index: SelectorType = cs.matches(INDEX_PATTERN)
+    active_index: SelectorType = cs.matches(ACTIVE_INDEX_PATTERN)
+    inactive_index: SelectorType = cs.matches(INACTIVE_INDEX_PATTERN)
+    object_index: SelectorType = cs.by_name(OBJECT_INDEX)
+    object_meta: SelectorType = cs.by_name(OBJECT_META)
     features: FeaturesSelector = FeaturesSelector()
     def __call__(self, *args):
         return pl.col(*args)

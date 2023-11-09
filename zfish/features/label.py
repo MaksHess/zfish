@@ -22,7 +22,7 @@ from zfish.features.types import LabelImage
 class LabelQuery(BaseModel, FeatureQuery):
     label_image: str
     features: tuple[LabelFeature, ...] = Field(
-        default=DefaultLabelFeature, validate_default=True
+        default=tuple(DefaultLabelFeature), validate_default=True
     )
 
     def load_resources(self, roi: "Roi") -> dict[str, Any]:

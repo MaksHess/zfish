@@ -11,6 +11,8 @@ if TYPE_CHECKING:
     import pandas as pd
     import polars as pl
 
+    from zfish.roi.spatial_roi import Roi, RoiMap
+
 NAPARI_COMMON_DEFAULTS = {
     "visible": True,
     **{

@@ -1,166 +1,83 @@
-import itk
-import SimpleITK as sitk
-import numpy as np
-from functools import wraps
-import warnings
+from functools import singledispatch
+from typing import Any, Sequence, TypeAlias
+
+import dask.array as da
 import h5py
+import numpy as np
+from spatial_image import SpatialImage, to_spatial_image
 
-SPACING = (1.0, 1.0, 1.0)  # itk convention: (x, y, z)
-DTYPE_CONVERSION = {np.dtype('uint64'): np.dtype('uint16'),
-                    np.dtype('uint32'): np.dtype('uint16'),
-                    np.dtype('uint16'): np.dtype('uint16'),
-                    np.dtype('uint8'): np.dtype('uint8'),
-                    np.dtype('int64'): np.dtype('uint16'),
-                    np.dtype('int32'): np.dtype('uint16'),
-                    np.dtype('int16'): np.dtype('int16'),
-                    np.dtype('float64'): np.dtype('float64'),
-                    np.dtype('float32'): np.dtype('float32'),
-                    np.dtype('float16'): np.dtype('float16'),
-                    np.dtype('bool'): np.dtype('uint8'), }
+ALL_DIMS = ("t", "c", "z", "y", "x")
+SPATIAL_DIMS = ("z", "y", "x")
+H5_DIMS = ("c", "z", "y", "x")
+H5_LABEL_DIMS = ("l", "z", "y", "x")
 
 
-def to_itk(img, spacing=None, conversion_warning=True, pass_everything=False, **kwargs):
-    if spacing is None:
-        spacing=kwargs.get('element_size_um')
-    if isinstance(img, np.ndarray):
-        new_dtype = DTYPE_CONVERSION[img.dtype]
-        if conversion_warning:
-            warnings.warn('Converting {0} to {1}'.format(img.dtype, new_dtype))
-        img = img.astype(new_dtype)
-        trans_img = itk.GetImageFromArray(img)
-        if spacing is None: spacing = SPACING
-        trans_img.SetSpacing(spacing)
-    elif isinstance(img, sitk.Image):
-        trans_img = itk.GetImageFromArray(sitk.GetArrayFromImage(img))
-        trans_img.SetOrigin(tuple(img.GetOrigin()))
-        if spacing is None: spacing = tuple(img.GetSpacing())
-        trans_img.SetSpacing(spacing)
-        trans_img.SetDirection(
-            itk.GetMatrixFromArray(np.array(img.GetDirection()).reshape((img.GetDimension(), img.GetDimension()))))
-    elif isinstance(img, itk.Image):
-        trans_img = img
-        if spacing is None: spacing = tuple(img.GetSpacing())
-        trans_img.SetSpacing(spacing)
-    elif isinstance(img, itk.LabelMap.x3):
-        filt = itk.LabelMapToLabelImageFilter.LM3IUS3.New(
-            img
-        )  # BUG: itk does not automatically use US3 if label map has more elements than 255 --> hardcoded .LM3IUS3.
-        filt.Update()
-        trans_img = filt.GetOutput()
-    elif isinstance(img, h5py.Dataset):
-        img_dset = img
-        img = to_numpy(img_dset)
-        new_dtype = DTYPE_CONVERSION[img.dtype]
-        if conversion_warning:
-            warnings.warn('Converting {0} to {1}'.format(img.dtype, new_dtype))
+TimeCoord: TypeAlias = int | float
 
-        trans_img = itk.GetImageFromArray(img.astype(new_dtype))
-        if spacing is None: spacing = tuple(
-            reversed(img_dset.attrs.get('element_size_um', img_dset.ndim * [1.0]).astype(np.float64)))
-        trans_img.SetSpacing(spacing)
+
+@singledispatch
+def to_si(
+    img: Any,
+) -> SpatialImage:
+    import itk
+    if isinstance(img, itk.Image):
+        return itk.xarray_from_image(img)
+    raise NotImplementedError(f"No implementation for type {type(img)}.")
+
+
+# @singledispatch
+# def _(multiscale_dsets: Sequence[h5py.Dataset]) -> MultiscaleSpatialImage:
+#     pass
+
+
+@to_si.register
+def _(dset: h5py.Dataset) -> SpatialImage:
+    data = da.expand_dims(da.array(dset), 0)
+    scale = dset.attrs["element_size_um"]
+    kwargs = {'scale': dict(zip(SPATIAL_DIMS, scale))}
+    if dset.attrs["img_type"] == "intensity":
+        channel = f"{dset.attrs['stain']}.{dset.attrs['cycle']}"
+        name = "image"
+        dims = H5_DIMS
+        kwargs = {**kwargs, 'dims': dims, 'c_coords': channel, 'name': name}
+    elif dset.attrs["img_type"] == "label":
+        channel = f"{dset.attrs['stain']}"
+        name = "label"
+        # dims = H5_LABEL_DIMS
+        dims = H5_DIMS
+        # kwargs = {**kwargs, 'dims': dims, 'l_coords': channel, 'name': name}
+        kwargs = {**kwargs, 'dims': dims, 'c_coords': channel, 'name': name}
+
     else:
-        if pass_everything:
-            trans_img = img
-        else:
-            raise ValueError('Unknown image type: {}'.format(type(img)))
-    return trans_img
+        channel = f"{dset.name}"
+        name = "unknown"
+    spi = to_spatial_image(
+        data, **kwargs
+        # dims=dims,
+        # scale=dict(zip(SPATIAL_DIMS, scale)),
+        # c_coords=channel,
+        # name=name,
+    )
+    for k, v in dset.attrs.items():
+        spi.attrs[k] = v
+    return spi
 
 
-def to_sitk(img, spacing=None, pass_everything=False, **kwargs):
-    if spacing is None:
-        spacing=kwargs.get('element_size_um')
-    if isinstance(img, itk.LabelMap.x3):
-        img = to_itk(img, spacing=spacing, pass_everything=pass_everything)
-    if isinstance(img, np.ndarray):
-        trans_img = sitk.GetImageFromArray(img)
-        if spacing is None: spacing = SPACING
-        trans_img.SetSpacing(spacing)
-    elif isinstance(img, itk.Image):
-        trans_img = sitk.GetImageFromArray(itk.GetArrayFromImage(img))
-        trans_img.SetOrigin(tuple(img.GetOrigin()))
-        if spacing is None: spacing = tuple(img.GetSpacing())
-        trans_img.SetSpacing(spacing)
-        trans_img.SetDirection(itk.GetArrayFromMatrix(img.GetDirection()).flatten())
-    elif isinstance(img, sitk.Image):
-        trans_img = img
-        if spacing is None: spacing = tuple(img.GetSpacing())
-        trans_img.SetSpacing(spacing)
-    elif isinstance(img, h5py.Dataset):
-        trans_img = sitk.GetImageFromArray(to_numpy(img))
-        if spacing is None: spacing = tuple(
-            reversed(img.attrs.get('element_size_um', img.ndim * [1.0]).astype(np.float64)))
-        trans_img.SetSpacing(spacing)
-    else:
-        if pass_everything:
-            trans_img = img
-        else:
-            raise ValueError('Unknown image type: {}'.format(type(img)))
-    return trans_img
-
-
-def to_numpy(img, pass_everything=False, return_metadata=False, **kwargs):
-    if isinstance(img, itk.LabelMap.x3):
-        img = to_itk(img, pass_everything=pass_everything)
-    if isinstance(img, (itk.Image, itk.VectorImage)):
-        trans_img = itk.GetArrayFromImage(img)
-    elif isinstance(img, sitk.Image):
-        trans_img = sitk.GetArrayFromImage(img)
-    elif isinstance(img, np.ndarray):
-        trans_img = img
-    elif isinstance(img, h5py.Dataset):
-        trans_img = img[...]
-    else:
-        if pass_everything:
-            trans_img = img
-        else:
-            raise ValueError('Unknown image type: {}'.format(type(img)))
-    if return_metadata:
-        metadata = extract_metadata(img)
-        return trans_img, metadata
-    return trans_img
-
-
-def extract_metadata(img):
-    metadata = dict()
-    if hasattr(img, 'GetSpacing'):
-        metadata['scale'] = tuple(img.GetSpacing())[::-1]
-    if hasattr(img, 'GetOrigin'):
-        metadata['origin'] = tuple(img.GetOrigin())[::-1]
-    if hasattr(img, 'attrs'):
-        metadata = {**metadata, **dict(img.attrs)}
-    return metadata
-
-
-def to_labelmap(img, spacing=None, pass_everything=False):
-    filt = itk.LabelImageToLabelMapFilter.New(to_itk(img, spacing=spacing, pass_everything=pass_everything))
-    filt.Update()
-    return filt.GetOutput()
-
-
-def at_all(func, output_format, input_format):
-    if input_format is None:
-        input_format = func.__module__.split('.')[-1].split('_')[0]  # Extract the input image type from the module name
-    assert input_format in ['np', 'sitk', 'itk']
-    conversion_function = {'np': to_numpy,
-                           'sitk': to_sitk,
-                           'itk': to_itk,
-                           np.ndarray: to_numpy,
-                           sitk.Image: to_sitk,
-                           itk.Image: to_itk}
-    to_in = conversion_function[input_format]  # Pick the appropriate conversion function
-    to_out = conversion_function[output_format]
-
-    @wraps(func)
-    def all_wrapper(*imgs, **kwargs):
-        trans_imgs = []
-        trans_kwargs = {}
-        for img in imgs:
-            trans_imgs.append(to_in(img, pass_everything=True))
-        for kwarg in kwargs:
-            trans_kwargs[kwarg] = to_in(kwargs[kwarg], pass_everything=True)
-        output = func(*trans_imgs, **trans_kwargs)
-        if isinstance(output, (tuple, list)):
-            return [to_out(e, pass_everything=True) for e in output]
-        return to_out(output, pass_everything=True)
-
-    return all_wrapper
+@to_si.register(np.ndarray)
+def _(
+    img: np.ndarray,
+    dims: Sequence[str] | None = None,
+    scale: Sequence[float] | None = None,
+    c_coords: Sequence[str] | None = None,
+    t_coords: Sequence[TimeCoord] | None = None,
+    name: str | None = None,
+) -> SpatialImage:
+    spatial_dims = tuple(e for e in dims if e in SPATIAL_DIMS)
+    return to_spatial_image(
+        img,
+        dims=dims,
+        scale=dict(zip(spatial_dims, scale)),
+        c_coords=c_coords,
+        t_coords=t_coords,
+        name=name,
+    )

@@ -1,6 +1,6 @@
 # %%
 import io
-from collections import abc
+from collections import abc, defaultdict
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from itertools import chain
@@ -129,6 +129,18 @@ def load_roi_table(root_path: PathLike, id_column="object") -> "pl.DataFrame":
         how='diagonal'
     )
 
+# def load_roi_map_tables(root_path: PathLike, id_column="object") -> "pl.DataFrame":
+#     import polars as pl
+    
+#     tables = defaultdict(list)
+    
+#     for roi_root in Path(root_path).rglob('*.parquet'):
+#         if roi_root.is_file():
+#             object_ = roi_root.stem
+#             tables[object_].append(pl.read_parquet(roi_root))
+    
+#     return {k: pl.concat(v, how='diagonal') for k, v in tables.items()}
+
 def load_roi_map_table(root_path: PathLike, id_column="roi") -> "pl.DataFrame":
     import polars as pl
 
@@ -186,7 +198,7 @@ import os
 from zfish.intensity_normalization.models import Model
 
 
-def write_models(models, root: Path | str):
+def write_models(models, root: Path | str, write_params_json: bool = True):
     """
     Write a nested dict to a nested file structure.
     """
@@ -199,7 +211,8 @@ def write_models(models, root: Path | str):
         if isinstance(value, dict):
             write_models(value, current_path)
         elif isinstance(value, Model):
-            value.save(directory=current_path, file_name="model", mode="wb")
+            value.save(directory=current_path, file_name="model", mode="wb", write_params_json=write_params_json)
+            
 
 
 def read_models(root: Path | str | None):

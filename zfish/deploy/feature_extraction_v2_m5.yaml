@@ -1,9 +1,9 @@
-root: "/data/active/marvwy/20220721_ZE4i2_aligned"
+root: "/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1"
 # root: "M:\\marvwy\\20220721_ZE4i2_aligned"
 
 image_dir: "imgs"
 
-output_dir: "features_v2"
+output_dir: "features_tcorr"
 
 level: 1
 
@@ -12,6 +12,10 @@ features:
   - label_image: "cells"
     parent_label_images:
       -  "embryoRaw"
+
+  - label_image: "cyto"
+    parent_label_images:
+      -  "cells"
 
   - label_image: "nucleiRaw3"
     parent_label_images:
@@ -31,6 +35,8 @@ features:
   intensity:
   - labelss:
     - "nucleiRaw3"
+    - "cells"
+    - "cyto"
     channels:
     - '*'
   
@@ -82,9 +88,9 @@ features:
 
 
 intensity_correction:
+  t_decay_models: "/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/models/t_decay/correction_factors.parquet"
+  # t_decay_correction_factor_column: "correctionFactor-Exp"
   z_decay_add_model_name_to_feature_path: true
-  t_decay_models: "/data/active/marvwy/20220721_ZE4i2_aligned/models/t_decay"
-  z_decay_models: "/data/active/marvwy/20220721_ZE4i2_aligned/models/z_decay/ExpFitLinear(loss='huber', features=['Centroid-z'])"
-  # t_decay_models: "M:\\marvwy\\20220721_ZE4i2_aligned\\models\\t_decay"
-  # z_decay_models: "M:\\marvwy\\20220721_ZE4i2_aligned\\models\\z_decay\\ExpFitLinear(loss='huber', features=['MediumPath', 'EmbryoPath'])"
+  z_decay_models: "/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/models/z_decay/ExpFitLinear(loss='huber', features=['Centroid-z'])"
   z_decay_two_step_label: "embryoRaw"
+  z_decay_default_models: null

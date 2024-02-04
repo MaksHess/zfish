@@ -24,6 +24,7 @@ import h5py
 import numpy as np
 import polars as pl
 import xarray as xr
+from tqdm import tqdm
 
 from zfish.features.types import LabelImage, SpatialImage
 from zfish.image.image import to_si
@@ -410,7 +411,6 @@ class Roi(abc.Mapping):
         channels = load_channels(_fp, level=level)
 
 
-        print(f"loading {name}...")
         return Roi(
             _fp=_fp,
             data={
@@ -779,7 +779,6 @@ class Roi(abc.Mapping):
         # rep.extend(coords_repr(self.images.coords, col_width=6).split("\n")[1:])
         return "\n".join(rep)
 
-xr.DataArray(np.arange(27).reshape((3, 3, 3)), coords={'x': np.arange(3), 'y': np.arange(3), 'c': ['a', 'b', 'c']})
 
 @dataclass
 class ResourceQuery:
@@ -848,6 +847,41 @@ def apply_z_decay_models_to_roi(
         paths=roi.paths,
     )
 
+
+def apply_t_decay_factors(
+    roi: Roi,
+    df_correction_factors: pl.DataFrame,
+    correction_column: str = "correctionFactor",
+    maintain_image_dtype: bool = True,
+) -> Roi:
+    df_roi = df_correction_factors.filter(pl.col("roi") == roi.name)
+
+    data = {}
+    # Copy label images
+    data[roi._LABELS_KEY] = roi.data[roi._LABELS_KEY]
+    # Apply correction factor to channels
+    out_channels = []
+    for channel in roi.images:
+        channel_name = channel.c.item()
+        if not channel_name in df_roi['channel']:
+            print(f'No t-correction for `{channel_name}`')
+            out_channels.append(channel)
+        else:
+            correction_factor = df_roi.filter(pl.col('channel')==channel_name)[correction_column].item()
+            out_channel = channel * correction_factor
+            if maintain_image_dtype:
+                out_channel = out_channel.astype(channel.dtype)
+            out_channels.append(out_channel)
+    data[roi._IMAGES_KEY] = xr.concat(out_channels, dim='c')
+
+    return Roi(
+        _fp=roi._fp,
+        data=data,
+        tables=roi.tables,
+        models=roi.models,
+        name=roi.name,
+        paths=roi.paths,
+    )
 
 @dataclass(frozen=True, slots=True)
 class SpatialDimMeta:
@@ -945,7 +979,10 @@ class RoiMap(abc.Mapping):
         features_root: PathLike[str] | None = None,
     ) -> "RoiMap":
         rois = {}
-        for fn in fns:
+        if len(fns) == 0:
+            raise ValueError("Empty list provided.")
+        
+        for fn in tqdm(fns):
             fn = Path(fn)
             roi = Roi.from_file(
                 fn,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pydantic_yaml import parse_yaml_file_as
 
-from zfish.features.feature_extraction_parameters_v2 import FeatureExtractionParams
+from zfish.features.feature_extraction_parameters import FeatureExtractionParams
 
 SLURM_COMMAND = """#!/usr/bin/env bash
 

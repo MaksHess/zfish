@@ -14,7 +14,12 @@ from pydantic_yaml import parse_yaml_file_as, to_yaml_str
 import zfish.features.polars_utils as pu
 from zfish.features.feature_extraction_parameters import FeatureExtractionParams
 from zfish.features.queries import FeatureQuery
-from zfish.roi.spatial_roi import Roi, apply_z_decay_models_to_roi, read_models
+from zfish.roi.spatial_roi import (
+    Roi,
+    apply_t_decay_factors,
+    apply_z_decay_models_to_roi,
+    read_models,
+)
 
 # logging.basicConfig(
 #     level='DEBUG',
@@ -102,11 +107,23 @@ def main():
     }
     logger.debug(f"{highlight('Models')}\n{z_decay_models}")
     logger.info("Applying z correction")
-    lazy_roi_resources_corr = apply_z_decay_models_to_roi(
+    lazy_roi_resources_zcorr = apply_z_decay_models_to_roi(
         models=z_decay_models,
         roi=lazy_roi_resources,
         two_step_label=params.intensity_correction.z_decay_two_step_label,
     )
+
+    logger.info("Loading t-decay factors.")
+    if params.intensity_correction.t_decay_models is None:
+        logger.info("No correction factors provided, skipping.")
+        lazy_roi_resources_corr = lazy_roi_resources_zcorr
+    else:
+        df_t_corr = pl.read_parquet(params.intensity_correction.t_decay_models)
+        lazy_roi_resources_corr = apply_t_decay_factors(
+            roi=lazy_roi_resources_zcorr,
+            df_correction_factors=df_t_corr,
+            correction_column=params.intensity_correction.t_decay_correction_factor_column,
+        )
 
     logger.info(f"{title('Feature Extration')}")
     queries = site_params.features.queries(lazy_roi_resources_corr)
@@ -139,7 +156,7 @@ def nested_repr(
     object_, indent=1, width=120, depth=None, compact=True, sort_keys=False
 ):
     if isinstance(object_, BaseModel):
-        if pydantic.version.VERSION < '2':
+        if pydantic.version.VERSION < "2":
             dict_ = json.loads(object_.json())
         else:
             dict_ = json.loads(object_.model_dump_json())

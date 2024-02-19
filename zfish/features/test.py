@@ -482,7 +482,7 @@ axes[1].set_title("Remapped data")
 import polars as pl
 
 from zfish.features.object_hierarchy import get_full_object_hierarchy
-from zfish.features.types import LabelImage, MultichannelLabelImage
+from zfish.features.typing import LabelImage, MultichannelLabelImage
 
 HIERARCHY = {
     "emb": (),

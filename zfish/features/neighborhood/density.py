@@ -11,7 +11,7 @@ from zfish.features.neighborhood.neighborhoods import NeighborhoodQueryObject
 from zfish.features.queries import FeatureQuery
 
 if TYPE_CHECKING:
-    from zfish.features.types import LabelImage
+    from zfish.features.typing import LabelImage
     from zfish.roi.spatial_roi import Roi
 
 

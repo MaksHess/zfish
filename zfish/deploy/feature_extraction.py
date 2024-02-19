@@ -48,7 +48,7 @@ out_handler.setFormatter(
 # logger.addHandler(err_handler)
 logger.addHandler(out_handler)
 
-
+# FIXME: write parameter file to output folder
 def main():
     logger.info(f"{title('Starting Feature Extraction')}")
     logger.info("Parsing CLI argunments...")

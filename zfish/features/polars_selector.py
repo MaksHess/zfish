@@ -19,10 +19,10 @@ if TYPE_CHECKING:
     from polars.type_aliases import SelectorType
 
 
-LABEL_PATTERN = "^{}((.lower)|(.upper))?(.[abc])?(.[xyz])?$"
+LABEL_PATTERN = "^{}((.lower)|(.upper))?(\W[abc])?(\W[xyz])?$"
 
 CHANNEL_PATTERN = "([a-zA-Z0-9-]+)\.(\d+)"
-INTENSITY_PATTERN = "^(" + CHANNEL_PATTERN + "_)?{}(.[abc])?(.[xyz])?$"
+INTENSITY_PATTERN = "^(" + CHANNEL_PATTERN + "_)?{}(\W[abc])?(\W[xyz])?$"
 
 CHANNEL_PAIR_PATTERN = f"{CHANNEL_PATTERN}\W{CHANNEL_PATTERN}"
 
@@ -46,17 +46,23 @@ DISTANCE = reduce(
     ],
 )
 DENSITY = (
-    cs.matches("^DELAUNAY:\d_Count$")
-    | cs.matches("^TOUCH:\d_Count$")
+    cs.matches("^DELAUNAY:\d+_Count$")
+    | cs.matches("^TOUCH:\d+_Count$")
     | cs.matches("^RAD:\d+(\.\d+)?_Count$")
     | cs.matches("^KNNd:\d+_")
 )
-FEATURES = LABEL | INTENSITY | COLOC | DISTANCE | DENSITY
-OBJ_INDEX = ~FEATURES
-HIERARCHY = cs.matches("^parent\W\w+$")
+NEIGHBORHOOD = (
+    cs.matches("^DELAUNAY:\d+_.*$")
+    | cs.matches("^TOUCH:\d+_.*$")
+    | cs.matches("^RAD:\d+(\.\d+)?_.*$")
+    | cs.matches("^KNNd:\d+_.*$")
+)
+FEATURES = LABEL | INTENSITY | COLOC | DISTANCE | DENSITY | NEIGHBORHOOD
+HIERARCHY = cs.matches("^parent\W.+$")
 FULL_INDEX = (
     cs.matches("^well$")
     | cs.matches("^roi$")
+    | HIERARCHY
     | cs.matches("^object$")
     | cs.matches("^label$")
     | cs.matches("^channel$")
@@ -64,22 +70,27 @@ FULL_INDEX = (
     | cs.matches("^acquisition$")
     | cs.matches("^channel_pair$")
 )
+SITE_INDEX = (
+    cs.matches("^roi$") | HIERARCHY | cs.matches("^object$") | cs.matches("^label$")
+)
 
 
 @define(frozen=True)
 class MySelector:
+    empty: "SelectorType" = cs.matches(
+        "^#_EMPTY_#$"
+    )  # just a token that should not match anything!
     index: "SelectorType" = FULL_INDEX
-    meta: "SelectorType" = ~(FEATURES | FULL_INDEX | HIERARCHY)
+    site_index: "SelectorType" = SITE_INDEX
+    meta: "SelectorType" = ~FEATURES
     hierarchy: "SelectorType" = HIERARCHY
-    hierarchy_index: "SelectorType" = (
-        cs.matches("^roi$") | HIERARCHY | cs.matches("^object$") | cs.matches("^label$")
-    )
     features: "SelectorType" = FEATURES
     label: "SelectorType" = LABEL
     intensity: "SelectorType" = INTENSITY
     correlation: "SelectorType" = COLOC
     distance: "SelectorType" = DISTANCE
     density: "SelectorType" = DENSITY
+    neighborhood: "SelectorType" = NEIGHBORHOOD
 
 
 sel = MySelector()

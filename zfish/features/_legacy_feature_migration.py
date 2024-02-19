@@ -111,7 +111,7 @@ import pandas as pd
 df_clean_full = pd.read_parquet(
     r"C:\Users\hessm\Documents\Programming\Python\zfish\data\feature_all_legacy.parquet"
 )
-df_corr = pd.read_parquet(r"C:\Users\hessm\Documents\Programming\Python\zfish\data\features\coloc.parquet")
+df_corr = pd.read_parquet(r"C:\Users\hessm\Documents\Programming\Python\zfish\data\features\old\coloc.parquet")
 df_timepoints = pd.read_parquet(r"C:\Users\hessm\Documents\Programming\Python\zfish\data\acquisition_times.parquet")
 
 # index_schema = {'roi': pd.CategoricalDtype(), 

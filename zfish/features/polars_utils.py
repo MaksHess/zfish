@@ -1,22 +1,31 @@
 # %%
+import logging
 from collections import defaultdict
-from typing import Literal, Sequence
+from collections.abc import Iterable
+from os import PathLike
+from pathlib import Path
+from typing import Callable, Literal, Sequence
 
 import colorcet as cc
+import numpy as np
 import polars as pl
 import polars.selectors as cs
 import seaborn as sns
-from polars.type_aliases import JoinStrategy
+import tqdm
+from polars.type_aliases import JoinStrategy, SelectorType
 from toolz.dicttoolz import valmap
 
 from zfish.features.polars_selector import sel
 
-POLARS_CONFIG_FILE = r'C:\Users\hessm\Documents\Programming\Python\zfish\zfish\features\polars.json'
+POLARS_CONFIG_FILE = (
+    r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\features\polars.json"
+)
+
+logger = logging.Logger(__name__)
 try:
     pl.Config.load(POLARS_CONFIG_FILE)
 except ValueError:
-    import warnings
-    warnings.warn(f'polars config file not found in {POLARS_CONFIG_FILE}')
+    logger.warn(f"polars config file not found in {POLARS_CONFIG_FILE}")
 
 FULL_INDEX_COLUMNS = ["roi", "object", "label", "channel", "stain", "acqusition"]
 CAT_DTYPE_COLUMNS = ["roi", "object", "channel", "stain"]
@@ -81,6 +90,22 @@ BOUNDING_BOX_COLUMNS = [
 DEBUG = True
 
 
+# def log(df: pl.DataFrame, message: str | None = None) -> pl.DataFrame:
+#     if message is not None:
+#         logger.info(message)
+#     logger.info(f'shape: {df.shape}')
+#     return df
+
+def log(df: pl.DataFrame, message: str | None = 'shape:', func: Callable[[pl.DataFrame, ...], str] = lambda x: f"{x.shape}", **kwargs):
+    introspection = func(df, **kwargs)
+    out_message = f"{message} {introspection}"
+    logger.info(out_message)
+    return df
+
+def id_(df: pl.DataFrame, **kwargs) -> pl.DataFrame:
+    return df
+
+
 def show(df: pl.DataFrame) -> pl.DataFrame:
     print(df)
     print()
@@ -95,76 +120,166 @@ def debug(df: pl.DataFrame, message: str = "", debug=DEBUG) -> pl.DataFrame:
         print()
     return df
 
+
 def lower_upper_iqr(series, q_lower=0.25, q_upper=0.75):
     ql = series.quantile(q_lower)
     qu = series.quantile(q_upper)
     iqr = qu - ql
     return ql, qu, iqr
 
+
 def iqr(series: pl.Series, ql=0.25, qu=0.75, r=0.0):
     ql, qu, iqr = lower_upper_iqr(series, q_lower=ql, q_upper=qu)
-    return (ql - r*iqr, qu + r*iqr)
+    return (ql - r * iqr, qu + r * iqr)
 
-# def iqr(series, q_lower=0.25, q_upper=0.75, iqr_mult=0.0):
-#     ql, qu, iqr = lower_upper_iqr(series, q_lower=q_lower, q_upper=q_upper)
-#     return ql - iqr_mult*iqr, qu + iqr_mult*iqr
 
-def drop_null_columns(df: pl.DataFrame, strategy: Literal['any', 'all'] = 'all', include_nan=True) -> pl.DataFrame:
+def drop_structs(df: pl.DataFrame) -> pl.DataFrame:
+    return df.select(
+        [
+            column
+            for column, dtype in zip(df.columns, df.dtypes)
+            if not isinstance(dtype, pl.Struct)
+        ]
+    )
+
+def read_table(
+    root: PathLike[str], _object: str = "", use_pyarrow=True
+) -> pl.DataFrame:
+    fns = list(Path(root).rglob(f"{_object}*.parquet"))
+    tables = []
+    for fn in tqdm.tqdm(fns):
+        table = pl.read_parquet(fn, use_pyarrow=use_pyarrow).with_columns(
+            pl.lit(fn.parent.name).alias("roi"), pl.lit(fn.stem).alias("object")
+        )
+        tables.append(table)
+    return pl.concat(tables, how="diagonal").select(sel.index, ~sel.index)
+
+
+# NOT PERFORMANT WITH SMALL FRAGMENTED TABLES!
+def scan_table(root: PathLike[str], _object: str = "") -> pl.LazyFrame:
+    fns = list(Path(root).rglob(f"{_object}*.parquet"))
+    tables = [
+        pl.scan_parquet(fn).with_columns(
+            pl.lit(fn.parent.name).alias("roi"), pl.lit(fn.stem).alias("object")
+        )
+        for fn in tqdm.tqdm(fns)
+    ]
+
+    return pl.concat(tables, how="diagonal")
+
+def column_null_count(df: pl.DataFrame, drop_zero_columns=False, sort=True) -> pl.DataFrame:
+    df_null_counts = (
+        df.with_columns(cs.by_dtype(pl.Float32, pl.Float64)).fill_nan(None)
+        .describe()
+        .filter(pl.col("describe") == "null_count")
+        .select(pl.exclude("describe").cast(pl.Int64))
+        .transpose(
+            include_header=True, header_name="feature", column_names=["null_count"]
+        )  # , column_names='null_count')
+        .with_columns((pl.col('null_count') / df.height).alias('null_percentage'))
+    )
+    if sort:
+        df_null_counts = df_null_counts.sort("null_count", descending=True)
+    if drop_zero_columns:
+        return df_null_counts.filter(pl.col("null_count") > 0)
+    return df_null_counts
+
+def drop_null_columns(
+    df: pl.DataFrame,
+    columns: SelectorType = cs.all(),
+    strategy: Literal["any", "all", "perc"] | float = "perc",
+    allowed_percentage=0.3,
+    include_nan=True,
+) -> pl.DataFrame:
     if include_nan:
-        if strategy == 'all':
-            col_is_all_null = (
-                df.with_columns(sel.dtype(pl.Float32, pl.Float64).fill_nan(None))
-                .select(sel("*").is_null().all().is_not())
-            ).row(0)
-            # col_is_all_null = df.select(pl.col("*").fill_nan(None).is_null().all().is_not()).row(0)
-        elif strategy == 'any':
-            col_is_all_null = (
-                df.with_columns(sel.dtype(pl.Float32, pl.Float64).fill_nan(None))
-                .select(sel("*").is_null().any().is_not())
-            ).row(0)
-            # col_is_all_null = df.select(pl.col("*").fill_nan(None).is_null().any().is_not()).row(0)
+        df_nan = df.with_columns(cs.by_dtype(pl.Float32, pl.Float64).fill_nan(None))
     else:
-        if strategy == 'all':
-            col_is_all_null = df.select(pl.col("*").is_null().all().is_not()).row(0)
-        elif strategy == 'any':
-            col_is_all_null = df.select(pl.col("*").is_null().any().is_not()).row(0)
-    return df.select(pl.col([c for c, filt in zip(df.columns, col_is_all_null) if filt==True]))
+        df_nan = df
+    if strategy == "all":
+        valid_col = df_nan.select(columns.is_null().all().not_())
+    elif strategy == "any":
+        valid_col = df_nan.select(columns.is_null().any().not_())
+    elif strategy == "perc":
+        null_percentage = df_nan.select(columns.is_null().sum() / columns.count().sum())
+        valid_col = (null_percentage <= allowed_percentage)
+    keep_columns = valid_col.transpose(include_header=True, header_name="feature", column_names=["keep"]).filter(pl.col("keep"))['feature'].to_list()
+    passthrough_columns = df_nan.select(~columns).columns
+    return df.select(
+            passthrough_columns + keep_columns
+    )
 
 
-def _rename_structs_to_unnest(df: pl.DataFrame, col: str, sep: str = '-') -> pl.Expr:
-    return pl.col(col).struct.rename_fields([f"{col}{sep}{k}" for k in df[col][0].keys()])
+def _rename_structs_to_unnest(df: pl.DataFrame, col: str, sep: str = "-") -> pl.Expr:
+    return pl.col(col).struct.rename_fields(
+        [f"{col}{sep}{k}" for k in df[col][0].keys()]
+    )
 
 
-def unnest_structs(df: pl.DataFrame, cols: str | Sequence[str], sep: str = '-') -> pl.DataFrame:
+def unnest_structs(
+    df: pl.DataFrame, cols: str | Sequence[str], sep: str = "-"
+) -> pl.DataFrame:
     if isinstance(cols, str):
         cols = (cols,)
     return df.select(
-        [pl.exclude(cols), *[_rename_structs_to_unnest(df, col, sep=sep) for col in cols]]
+        [
+            pl.exclude(cols),
+            *[_rename_structs_to_unnest(df, col, sep=sep) for col in cols],
+        ]
     ).unnest(cols)
 
 
-def unnest_all_structs(df: pl.DataFrame, sep: str = '\.') -> pl.DataFrame:
+def unnest_all_structs(df: pl.DataFrame, sep: str = ".") -> pl.DataFrame:
     cols = [col for col, dtype in zip(df.columns, df.dtypes) if dtype == pl.Struct]
     return unnest_structs(df, cols, sep=sep)
 
 
-def nest_structs(df: pl.DataFrame, sep='\.', pattern_after_sep: str | Sequence[str] = '[xyz]', pattern_before_sep: str | Sequence[str] = '[A-Z].*') -> pl.DataFrame:
+def nest_structs(
+    df: pl.DataFrame,
+    sep="\.",
+    pattern_after_sep: str | Sequence[str] = "[xyz]",
+    pattern_before_sep: str | Sequence[str] = "[A-Z].*",
+) -> pl.DataFrame:
     struct_columns = (
-    pl.Series('columns', df.columns)
-    .to_frame()
-    .with_columns([
-        pl.col('columns').str.extract(f"^({pattern_before_sep}){sep}({pattern_after_sep})$", 1),
-        pl.col('columns').str.extract(f"^({pattern_before_sep}){sep}({pattern_after_sep})$", 2).alias('field_names')
-        ])
-    ).drop_nulls().groupby('columns', maintain_order=True).agg(pl.all()).rows()
+        (
+            pl.Series("columns", df.columns)
+            .to_frame()
+            .with_columns(
+                [
+                    pl.col("columns").str.extract(
+                        f"^({pattern_before_sep}){sep}({pattern_after_sep})$", 1
+                    ),
+                    pl.col("columns")
+                    .str.extract(
+                        f"^({pattern_before_sep}){sep}({pattern_after_sep})$", 2
+                    )
+                    .alias("field_names"),
+                ]
+            )
+        )
+        .drop_nulls()
+        .groupby("columns", maintain_order=True)
+        .agg(pl.all())
+        .rows()
+    )
 
-    return df.select([
-        pl.exclude([f'^{column_name}{sep}{pattern_after_sep}$' for column_name, field_names in struct_columns]),
-        *[
-        pl.struct([f'^{column_name}{sep}{field_name}$' for field_name in field_names]).struct.rename_fields(field_names).alias(column_name)
-        for column_name, field_names in struct_columns
+    return df.select(
+        [
+            pl.exclude(
+                [
+                    f"^{column_name}{sep}{pattern_after_sep}$"
+                    for column_name, field_names in struct_columns
+                ]
+            ),
+            *[
+                pl.struct(
+                    [f"^{column_name}{sep}{field_name}$" for field_name in field_names]
+                )
+                .struct.rename_fields(field_names)
+                .alias(column_name)
+                for column_name, field_names in struct_columns
+            ],
         ]
-    ])
+    )
 
 
 def set_index_dtypes(df: pl.DataFrame) -> pl.DataFrame:
@@ -183,16 +298,13 @@ def set_index_dtypes(df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
 
-def stratified_sample(by: str, n: int) -> pl.Expr:
-    return pl.int_range(0, pl.count()).shuffle().over(by) < n
-
 
 def stack_correlation_metric_by_acquisition(
-    df_corr: pl.DataFrame, corr_map: dict[str, int] = CORRELATION_BY_ACQUISITION_MAP
+    df_corr: pl.DataFrame, corr_map: dict[str, int] = CORRELATION_BY_ACQUISITION_MAP, 
 ):
     return (
         df_corr.rename(valmap(str, corr_map))
-        .melt(["roi", "structure", "label"], list(map(str, corr_map.values())))
+        .melt(["roi", "object", "label"], list(map(str, corr_map.values())))
         .with_columns(
             [
                 pl.col("variable").cast(pl.UInt16).alias("acquisition"),
@@ -235,8 +347,6 @@ def join(
     return df
 
 
-
-
 def _split_feature_name(columns: list[str], sep="_") -> dict[str, dict[str, str]]:
     res = defaultdict(dict)
     for column in columns:
@@ -248,11 +358,13 @@ def stack_column_name_to_column(
     df: pl.DataFrame,
     sep: str = "_",
     column_name: str = "resources",
-    index: tuple[str, ...] | None = None,
-    return_list: bool = False
+    index: "SelectorType | Iterable[str] | None" = None,
+    return_list: bool = False,
 ) -> pl.DataFrame:
     if index is None:
         index = tuple(df.idx.active)
+    elif cs.is_selector(index):
+        index = cs.expand_selector(df, index)
     split = _split_feature_name([e for e in df.columns if e not in index], sep=sep)
     static_columns = list(split.get("", dict()).keys())
     static_features = [e for e in static_columns if e not in index]
@@ -383,12 +495,41 @@ def pipe_df_nulls(df, **kwargs):
     plot_df_nulls(df, **kwargs)
     return df
 
+
+def plot_nulls_column(
+    df: pl.DataFrame,
+    index: SelectorType = sel.index,
+    sort=True,
+    drop_zero_columns=False,
+    ax=None,
+    max_labeled_features: int = 30,
+):
+    import matplotlib.pyplot as plt
+    
+    null_counts_table  = column_null_count(df, drop_zero_columns=drop_zero_columns, sort=sort)
+    values = null_counts_table['null_percentage']
+    
+    if ax is None:
+        _, ax = plt.subplots(figsize=(2, 6))
+    
+    ax.plot(values, np.arange(len(values)))
+    if len(values) > max_labeled_features:
+        print('tyin')
+        take_every_nth = round(len(values) / max_labeled_features)
+        ax.set_yticks(np.arange(len(values)), minor=True)
+    ax.set_yticks(np.arange(len(values))[::take_every_nth])
+    ax.set_yticklabels(null_counts_table['feature'][::take_every_nth])
+    ax.set_xlabel('null percentage')
+    ax.set_ylabel(f'feature ({len(values)})')
+    ax.invert_yaxis()
+
 def plot_df_nulls(
     df: pl.DataFrame,
     index: tuple[str, ...] = ("roi", "object", "label"),
     row_color_columns: tuple[str, ...] | None = None,
     **kwargs,
 ):
+    df = df.fill_nan(None)
     # pdf_index = df.select(pl.col(e) for e in index).to_pandas()
     pdf_cats = (
         None
@@ -406,7 +547,7 @@ def plot_df_nulls(
         df.select(feature_columns).select(pl.all().is_null()).to_pandas()
     )
     nan_percentage = pdf_features_is_null.sum().sum() / pdf_features_is_null.size
-    
+
     default_params = dict(
         figsize=(5, 6),
         row_cluster=False,
@@ -417,14 +558,14 @@ def plot_df_nulls(
         row_colors=pdf_cats,
         vmin=0,
         vmax=1,
-        )
-    
+    )
+
     g = sns.clustermap(
         pdf_features_is_null,
         **{
             **default_params,
             **kwargs,
-        }
+        },
     )
 
     if g.ax_cbar:

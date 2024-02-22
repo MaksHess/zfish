@@ -49,10 +49,31 @@ def main():
             [e for e in available_channels if e.startswith("Pol-II-S")]
         )
         
+    def test_pair_star_expression_by_name():
+        assert _parse_pairwise_star_expression([("DAPI.0", "DAPI.1")], available_channels) == set([("DAPI.0", "DAPI.1")])
+        
+    def test_pair_star_expression_negate():
+        assert _parse_pairwise_star_expression([("DAPI.0", "!DAPI.0")], available_channels) == set([("DAPI.0", e) for e in available_channels if e != 'DAPI.0'])
+        assert _parse_pairwise_star_expression([("DAPI.0", "DAPI.[!0]")], available_channels) == set([("DAPI.0", "DAPI.1")])
+        
+    def test_pair_star_expression_wildcard():
+        assert _parse_pairwise_star_expression([("DAPI.0", "*")], available_channels) == set([("DAPI.0", e) for e in available_channels])
+        assert _parse_pairwise_star_expression([("*", "DAPI.1")], available_channels) == set([(e, "DAPI.1") for e in available_channels])
+        assert _parse_pairwise_star_expression([("DAPI.0", "DAPI.*")], available_channels) == set([("DAPI.0", "DAPI.0"), ("DAPI.0", "DAPI.1")])
+
+    def test_pair_star_expression_negate_wildcard():
+        assert _parse_pairwise_star_expression([("DAPI.0", "!*")], available_channels) == set([])
+        assert _parse_pairwise_star_expression([("!*", "DAPI.1")], available_channels) == set([])
+        assert _parse_pairwise_star_expression([("DAPI.0", "!Pol-II*")], available_channels) == set([("DAPI.0", "DAPI.0"), ("DAPI.0", "DAPI.1"), ("DAPI.0", "PCNA.0"), ("DAPI.0", "PCNA.1")])
+        
     test_star_expression_by_name()
     test_star_expression_negate()
     test_star_expression_wildcards()
     test_star_expression_negate_wildcards()
+    test_pair_star_expression_by_name()
+    test_pair_star_expression_negate()
+    test_pair_star_expression_wildcard()
+    test_pair_star_expression_negate_wildcard()
 
 
 def _parse_star_expression(
@@ -109,6 +130,8 @@ def _parse_pairwise_star_expression(
         out_pairs.extend([p for p in product(matching_channels1, matching_channels2)])
     return set(out_pairs)
 
+if __name__ == '__main__':
+    main()
 # def _parse_star_expression(
 #     channels: set[str],
 #     available_channels: set[str],

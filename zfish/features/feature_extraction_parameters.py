@@ -18,6 +18,10 @@ from zfish.features.constants import (
     IntensityFeature,
 )
 from zfish.features.distance import DistanceQuery
+from zfish.features.feature_extraction_parameters_glob_parser import (
+    _parse_pairwise_star_expression,
+    _parse_star_expression,
+)
 from zfish.features.feature_types import (
     Resources,
 )
@@ -64,68 +68,6 @@ class LabelObject(BaseModel):
 class ChannelPair(BaseModel):
     channel_0: str
     channel_1: str
-    
-def _parse_star_expression(
-    channels: set[str],
-    available_channels: set[str],
-) -> set[str]:
-    channels = set(channels)
-    available_channels = set(available_channels)
-    if channels == {"*"}:
-        return available_channels
-    if any([ch.startswith("!") for ch in channels]):
-        assert all(
-            [ch.startswith("!") for ch in channels]
-        ), "All channels have to start with `!` if any channel starts with `!`."
-        excluded_channels = [e[1:] for e in channels]
-        for ch in excluded_channels:
-            assert ch in available_channels, f"`{ch}` not in `{available_channels}`."
-        return set([ch for ch in available_channels if ch not in excluded_channels])
-    else:
-        for ch in channels:
-            assert ch in available_channels, f"`{ch}` not in `{available_channels}`."
-        return channels
-
-
-def _parse_pairwise_star_expression(
-    channel_pairs: set[tuple[str, str]],
-    available_channels: set[str],
-) -> set[tuple[str, str]]:
-    out_pairs = set()
-    for c0, c1 in channel_pairs:
-        if (c0 == "*" or c0.startswith("!")) and (c1 == "*" or c1.startswith("!")):
-            out_pairs.update(
-                [
-                    tuple(sorted(e))
-                    for e in product(
-                        _parse_star_expression(set([c0]), available_channels),
-                        _parse_star_expression(set([c1]), available_channels),
-                    )
-                ]
-            )
-        elif c0 == "*" or c0.startswith("!"):
-            out_pairs.update(
-                [
-                    tuple(sorted(e))
-                    for e in zip(
-                        _parse_star_expression(set([c0]), available_channels),
-                        repeat(c1),
-                    )
-                ]
-            )
-        elif c1 == "*" or c1.startswith("!"):
-            out_pairs.update(
-                [
-                    tuple(sorted(e))
-                    for e in zip(
-                        repeat(c0),
-                        _parse_star_expression(set([c1]), available_channels),
-                    )
-                ]
-            )
-        else:
-            out_pairs.add(tuple(sorted((c0, c1))))
-    return out_pairs
 
 
 def _parse_channel_pairs(

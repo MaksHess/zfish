@@ -1,14 +1,16 @@
 # %% Imports and definitions
 from pathlib import Path
-from typing import Any, TypeVar
 
 import matplotlib.pyplot as plt
 import polars as pl
 import polars.selectors as cs
 import seaborn as sns
 
+from zfish.features.polars_preprocessing import get_metadata
 from zfish.features.polars_selector import sel
 from zfish.features.polars_utils import (
+    drop_null_columns,
+    pipe_df_nulls,
     read_table,
     split_channel_column,
     split_channel_pair_column,
@@ -19,10 +21,13 @@ from zfish.features.polars_utils import (
 )
 from zfish.intensity_normalization.models import (
     Exp,
-    ExpFitLinear,
     ExpNoOffset,
     Linear,
-    Model,
+    LogLinear,
+)
+from zfish.preprocessing.outlier_ranges import (
+    RngOutlier,
+    remove_outliers,
 )
 from zfish.roi.spatial_roi import Roi, RoiMap, load_roi_tables
 
@@ -43,14 +48,6 @@ df_nuc = read_table(fld_features_uncorr, _object="nucleiRaw3")
 
 
 # %% Discard outliers
-from functools import partial, reduce
-from typing import Any, Callable, TypeVar
-
-from zfish.features.polars_preprocessing import get_metadata
-from zfish.preprocessing.outlier_ranges import (
-    RngOutlier,
-    remove_outliers,
-)
 
 outlier_ranges = [
     {
@@ -92,7 +89,6 @@ df_meta = df_meta.with_columns(
 
 
 # %% Select relevant features and compute medium & embryo path length.
-from zfish.features.polars_utils import pipe_df_nulls
 
 features = [
     "Centroid",
@@ -132,12 +128,6 @@ df = (
 )
 df
 # %% Convert tables into tall (tidy) format.
-from zfish.features.polars_utils import (
-    drop_null_columns,
-    split_channel_column,
-    split_channel_pair_column,
-    stack_column_name_to_column,
-)
 
 df_label = df.select(sel.index, sel.label, path_selector)
 
@@ -158,9 +148,9 @@ df_distance = df.select(sel.index - sel.hierarchy, sel.distance).pipe(
 )
 # %% Join all tables
 df_merge = (
-    df_label.join(df_intensity, on=["roi", "object", "label"], how="outer")
-    .join(df_corr, on=["roi", "object", "label", "acquisition"], how="outer")
-    .join(df_distance, on=["roi", "object", "label"], how="outer")
+    df_label.join(df_intensity, on=["roi", "object", "label"], how="left")
+    .join(df_corr, on=["roi", "object", "label", "acquisition"], how="left")
+    .join(df_distance, on=["roi", "object", "label"], how="left")
     .with_columns(cs.by_name("PearsonR").fill_null(1.0))
     .select(sel.index, path_selector, sel.features)
 )
@@ -213,10 +203,9 @@ channels = [
 
 models = [
     Linear(loss="huber"),
-    ExpFitLinear(loss="huber"),
-    ExpNoOffset(loss="huber"),
-    Exp(loss="huber"),
+    LogLinear(loss="huber"),
     Exp(loss="huber", pos_offset=True),
+    Exp(loss="huber", pos_offset=False),
 ]
 model_colors = ["#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51"]
 scatter_color = "#8e8e8e"
@@ -228,6 +217,7 @@ n_featuress = [len(X_columns) for X_columns in X_columnss]
 n_samples_model = None
 n_samples_plot = 20000
 
+# %%
 if n_samples_kde > n_samples_plot:
     print("`n_samples_kde` must be <= `n_samples_plot`.")
     n_samples_kde = n_samples_plot
@@ -260,13 +250,11 @@ for j, (model, model_color) in enumerate(zip(models, model_colors)):
     channel_models = {}
     for i, channel in enumerate(channels):
         print(channel)
-        df_channel = (
-            df_merge_clean.filter(pl.col("channel") == channel)
-            .with_columns(
-                (pl.col("Mean") / pl.col("Mean").mean()).name.prefix(f"{channel}_")
-            )
-            .to_pandas()
-        )
+
+        df_channel = df_merge_clean.filter(pl.col("channel") == channel).with_columns(
+            pl.col("Mean").name.prefix(f"{channel}_")
+        ).to_pandas()
+
         y_column = f"{channel}_Mean"
 
         if n_samples_plot is None:
@@ -379,23 +367,87 @@ plt.legend()
 
 more_models = {}
 more_models["z_decay"] = all_models
-
 # %%
 from zfish.roi.spatial_roi import write_models
 
-fld_models = fld_features_uncorr.parent.parent / "model_v2"
+fld_models = fld_features_uncorr.parent.parent / "models_v3"
+fld_plots = fld_models / "__plots/z_decay"
+fld_plots.mkdir(exist_ok=True, parents=True)
 
 write_models(more_models, root=fld_models)
 
+figs[0].savefig(fld_plots / 'overview__one_step.svg')
+figs[1].savefig(fld_plots / 'overview__two_step.svg')
 # %%
-# import pandas as pd
+
+import holoviews as hv
+
+from zfish.intensity_normalization.plots import data_range, plot_model_, plot_models
+from zfish.roi.spatial_roi import read_models
+
+hv.extension("plotly")
+
+# fld_models = Path('C:/Users/hessm/Documents/zfish_local/models_v3')
+
+# more_models = read_models(fld_models)
 
 
+NEW_NAMES = {
+    "Linear(features=Centroid-z, loss=huber)": "one_step__Linear",
+    "Linear(features=MediumPath;EmbryoPath, loss=huber)": "two_step__Linear",
+    "LogLinear(features=Centroid-z, loss=huber)": "one_step__LogLinear",
+    "LogLinear(features=MediumPath;EmbryoPath, loss=huber)": "two_step__LogLinear",
+    "Exp(features=Centroid-z, loss=huber, pos_offset=True)": "one_step__ExpPos",
+    "Exp(features=MediumPath;EmbryoPath, loss=huber, pos_offset=True)": "two_step__ExpPos",
+    "Exp(features=Centroid-z, loss=huber, pos_offset=False)": "one_step__Exp",
+    "Exp(features=MediumPath;EmbryoPath, loss=huber, pos_offset=False)": "two_step__Exp",
+}
+
+for channel in channels:
+    print(channel)
+    df_channel = df_merge_clean.filter(pl.col("channel") == channel)
+    models = {}
+    for model_name in NEW_NAMES:
+        dd = more_models['z_decay'][model_name]
+        if channel in dd:
+            models[NEW_NAMES[model_name]] = dd[channel]
+    figure = (
+        plot_models(models, df_channel, target_column="Mean", n_samples=10_000)
+        # .opts(
+        #     opts.Scatter3D(height=300),
+        #     opts.Scatter(height=300),
+        #     opts.Distribution(height=300),
+        # )
+        .opts(title=f"channel = {channel}")
+    )
+    out_fn = fld_plots / f"individual_{channel}.html"
+    hv.save(figure, out_fn)
+
+# %%
+import plotly.graph_objects as go
+import plotly.io as pio
+
+df_plot
+
+
+
+fig = go.Figure(data=[go.Scatter3d(x=df_plot['MediumPath'], y=df_plot['EmbryoPath'], z=df_plot['Mean'], mode='markers', marker=dict(size=2, opacity=0.5, color='rgb(150, 150, 150)'))])
+fig = go.Figure()
+fig.update_layout(template='simple_white+gridon')
+# fig.update_xaxes(minor=dict(showgrid=True), overwrite=True)
+# fig.update_yaxes(minor=dict(showgrid=True), overwrite=True)
+# fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), scene=dict(zaxis=dict(range=[0, 200])))
+fig.update_layout(xaxis=dict(ticks='inside'), yaxis=dict(ticks='inside'))
+fig.update_layout(scene=dict(xaxis=dict(ticks='inside'), yaxis=dict(ticks='inside'), zaxis=dict(ticks='inside')))
+fig.show()
+
+
+# %%
 # def stratified_sample(df, attr, n="max", s=5):
 #     strat = pd.cut(
 #         df[attr],
 #         bins=np.linspace(df[attr].min() - 1, df[attr].max() + 1, s + 1),
-#         labels=np.arange(s),
+
 #     )
 #     if n == "max":
 #         n = strat.value_counts().min() * s
@@ -1199,3 +1251,5 @@ write_models(more_models, root=fld_models)
 # )
 
 # # %%
+
+# %%

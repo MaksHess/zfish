@@ -37,6 +37,11 @@ requirements = [
     "python-forge",
     "feature_engine",
     "strenum",
+    "datashader",
+    "holoviews",
+    "plotly",
+    "KDEpy",
+    "cmap",
 ]
 
 test_requirements = []

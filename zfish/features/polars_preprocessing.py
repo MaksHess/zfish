@@ -34,7 +34,6 @@ META_COLUMNS = reduce(
 )
 
 
-
 def get_metadata(
     df: AnyFrameT,
     objects_to_count: tuple[str] = ("nucleiRaw3",),
@@ -56,6 +55,10 @@ def get_metadata(
                 pl.col("parts").list.first().alias("well"),
                 pl.col("parts").list.slice(1).list.join("_").alias("site"),
             ]
+        )
+        .with_columns(
+            pl.col("well").str.slice(0, 1).alias("row"),
+            pl.col("well").str.slice(1).alias("col"),
         )
         .drop("parts")
     )

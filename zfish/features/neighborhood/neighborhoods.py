@@ -2,6 +2,7 @@
 Functions to compute radius, knn or touch adjacejcy matrices based on KDTrees or label 
 images in case of touch neighborhood.
 """
+
 # %%
 import functools
 import inspect
@@ -9,13 +10,13 @@ import logging
 import warnings
 from collections.abc import Callable, Iterable, Sequence
 from itertools import accumulate, product
-from typing import Literal, TypeAlias, cast
+from typing import Literal, ParamSpec, TypeAlias, TypeVar, cast
 
 import networkx as nx
 import numpy as np
 import polars as pl
-from attrs import asdict, define, frozen
-from numpy.typing import ArrayLike, NDArray
+from attrs import asdict, frozen
+from numpy.typing import NDArray
 from scipy import spatial
 from scipy.ndimage import map_coordinates
 from scipy.sparse import csr_array
@@ -144,11 +145,14 @@ class KnnKernelQuery(KernelQuery):
     row_normalized: bool = True
 
 
+P = ParamSpec("P")
+T = TypeVar("T")
+
 class tuple_product:  # type: ignore
     def __init__(self, *decorator_args):
         self.decorator_args = decorator_args
 
-    def __call__(self, func):
+    def __call__(self, func: Callable[P, T]) -> Callable[P, tuple[T, ...]]:
         @functools.wraps(func)
         def wrapped_func(*args, **kwargs):
             function_signature = inspect.signature(func).parameters
@@ -183,14 +187,16 @@ class tuple_product:  # type: ignore
 
 
 @tuple_product("r", "self_loops")
-def radius(r, self_loops=False, distance=False) -> tuple[RadiusAdjacencyQuery, ...]:
+def radius(
+    r, self_loops=False, distance=False
+) -> RadiusAdjacencyQuery | RadiusDistanceQuery:
     if distance:
         return RadiusDistanceQuery(r=r, self_loops=self_loops)
     return RadiusAdjacencyQuery(r=r, self_loops=self_loops)
 
 
 @tuple_product("k", "self_loops")
-def knn(k, self_loops=False, distance=False) -> tuple[KnnAdjacencyQuery, ...]:
+def knn(k, self_loops=False, distance=False) -> KnnAdjacencyQuery | KnnDistanceQuery:
     if distance:
         return KnnDistanceQuery(k=k, self_loops=self_loops)
     return KnnAdjacencyQuery(k=k, self_loops=self_loops)
@@ -199,7 +205,7 @@ def knn(k, self_loops=False, distance=False) -> tuple[KnnAdjacencyQuery, ...]:
 @tuple_product("r", "self_loops", "function")
 def radius_kernel(
     r, self_loops=True, function="triangular", row_normalized=True
-) -> tuple[RadiusKernelQuery, ...]:
+) -> RadiusKernelQuery:
     return RadiusKernelQuery(
         r=r, self_loops=self_loops, function=function, row_normalized=row_normalized
     )
@@ -208,7 +214,7 @@ def radius_kernel(
 @tuple_product("k", "self_loops", "function")
 def knn_kernel(
     k, self_loops=True, function="triangular", row_normalized=True
-) -> tuple[RadiusKernelQuery, ...]:
+) -> KnnKernelQuery:
     return KnnKernelQuery(
         k=k, self_loops=self_loops, function=function, row_normalized=row_normalized
     )
@@ -219,12 +225,12 @@ def delaunay(
     n_steps,
     self_loops=False,
     threshold=None,
-) -> tuple[DelaunayQuery, ...]:
+) -> DelaunayQuery:
     return DelaunayQuery(n_steps=n_steps, self_loops=self_loops, threshold=threshold)
 
 
 @tuple_product("n_steps", "self_loops", "threshold")
-def touch(n_steps, self_loops=False, threshold=None) -> tuple[DelaunayQuery, ...]:
+def touch(n_steps, self_loops=False, threshold=None) -> TouchQuery:
     return TouchQuery(n_steps=n_steps, self_loops=self_loops, threshold=threshold)
 
 
@@ -447,7 +453,7 @@ def get_delaunay_adjacency(
 # TODO: implement
 def get_touch_adjacency(label_image: SpatialImage, absolute_surface=True):
     touch_matrix = weighted_anisotropic_touch_matrix(
-        label_image.to_numpy().astype('int32'), *label_image.meta.scale
+        label_image.to_numpy().astype("int32"), *label_image.meta.scale
     )
     np.fill_diagonal(touch_matrix, 0)
     labels = np.unique(label_image)[1:]
@@ -496,11 +502,11 @@ def query_knn_adjacency(
     self_loops: bool = False,
 ) -> CSRArray:
     n_objects = neighbors._fit_X.shape[0]
-    if k > (n_objects-1):
+    if k > (n_objects - 1):
         logger.warn(
             f"k={k} > (n_objects-1)={(n_objects-1)}; setting k to {n_objects-1}"
         )
-        k = n_objects-1
+        k = n_objects - 1
     X = neighbors._fit_X if self_loops else None
     query = neighbors.kneighbors_graph(
         X=X,
@@ -517,11 +523,11 @@ def query_knn_distance(
     self_loops: bool = False,
 ) -> CSRArray:
     n_objects = neighbors._fit_X.shape[0]
-    if k > (n_objects-1):
+    if k > (n_objects - 1):
         logger.warn(
             f"k={k} > (n_objects-1)={(n_objects-1)}; setting k to {n_objects-1}"
         )
-        k = n_objects-1
+        k = n_objects - 1
     X = neighbors._fit_X if self_loops else None
     query = neighbors.kneighbors_graph(
         X=X,
@@ -862,6 +868,7 @@ class NeighborhoodQueryObject:
             touch(n_steps=n_steps, self_loops=self_loops, threshold=threshold)
         )
 
+    # TODO: static method?
     def generate_neighborhood(self, query: NeighborhoodQuery) -> CSRArray:
         if isinstance(query, RadiusAdjacencyQuery):
             arrays = query_radius_adjacency(self.neighbors.values(), **asdict(query))
@@ -882,7 +889,7 @@ class NeighborhoodQueryObject:
         elif isinstance(query, TouchQuery):
             if not self.touch_adjacency:
                 raise RuntimeError(
-                    "`NeighborhoodQueryObject.touch_adjacency` not found!"
+                    "`NeighborhoodQueryObject.touch_adjacency` not found! Did you instantiate NeighborhoodQueryObject.from_labelimage or provide `touch_adjacency`?"
                 )
             arrays = query_delaunay_adjacency(self.touch_adjacency.csr, **asdict(query))
         else:
@@ -1123,6 +1130,10 @@ if __name__ == "__main__":
     nq.knn([2, 5, 10, 20, 30, 50], distance=True).aggregate_weights(agg_funcs.Median)
     # %%
     np.array(np.arange(9).reshape((3, 3))) @ np.array(np.arange(9).reshape((3, 3)))
+
+
+# %%
+
 # def length_clipped_delaunay_adjacency_matrix(
 #     kdtree: KDTree,
 #     k_neighbors: int,

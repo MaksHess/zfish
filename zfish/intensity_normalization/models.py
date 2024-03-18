@@ -254,7 +254,7 @@ class LogLinear(Model):
         return self
 
     def predict(self, X: NDArray[Any]) -> NDArray[Any]:
-        return np.exp(CALLABLES[self._callable_key](np.asarray(X), *self.params))
+        return np.exp(CALLABLES[self._callable_key](X, *self.params))
 
     @property
     def y_intercept(self) -> float:

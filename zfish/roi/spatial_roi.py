@@ -28,7 +28,7 @@ from tqdm import tqdm
 
 from zfish.features.types import LabelImage, SpatialImage
 from zfish.image.h5_io import to_si
-from zfish.intensity_normalization.models import apply_model_to_channel
+from zfish.intensity_normalization.models import lazy_apply_model_to_channel
 from zfish.io import h5
 from zfish.roi._roi_formatting import SORT_KEY, _coordinates_repr
 
@@ -797,6 +797,7 @@ def apply_z_decay_models_to_roi(
     roi: Roi,
     two_step_label: str | None = None,
     suffix: str = "",
+    correction_factor_clip_range: tuple[float, float] | None = (0.0, 50.0)
 ) -> Roi:
     if models is None:
         return roi
@@ -825,8 +826,8 @@ def apply_z_decay_models_to_roi(
                             label_image = roi.labels.sel(l=two_step_label)
                     else:
                         label_image = None
-                    channel_image_corr = apply_model_to_channel(
-                        model, channel_image, label_image
+                    channel_image_corr = lazy_apply_model_to_channel(
+                        model, channel_image, label_image, correction_factor_clip_range
                     )
                 channels.append(channel_image_corr)
             if "c" in list(roi.data[k].coords.keys()) and "c" not in roi.data[k].dims:

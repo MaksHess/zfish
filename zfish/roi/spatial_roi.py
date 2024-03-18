@@ -27,7 +27,7 @@ import xarray as xr
 from tqdm import tqdm
 
 from zfish.features.types import LabelImage, SpatialImage
-from zfish.image.image import to_si
+from zfish.image.h5_io import to_si
 from zfish.intensity_normalization.models import apply_model_to_channel
 from zfish.io import h5
 from zfish.roi._roi_formatting import SORT_KEY, _coordinates_repr

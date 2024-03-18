@@ -35,7 +35,7 @@ def _load_multiscale(
     return MultiscaleSpatialImage.from_dict(out_dict)
 
 
-def _load_roi(
+def _load_arrays(
     root_path: str,
     attrs_select: dict[str, str | int | tuple[str | int, ...]] | None = None,
 ) -> SpatialImage:
@@ -53,7 +53,7 @@ def load_channels(root_path: str, level: int | None = None) -> SpatialImage:
     if level is None:
         level = sorted(h5.attrs_set(f, "level", attrs_select=attrs_select))[0]
     attrs_select = {**attrs_select, **{"level": level}}
-    return _load_roi(root_path=root_path, attrs_select=attrs_select)
+    return _load_arrays(root_path=root_path, attrs_select=attrs_select)
 
 
 def load_labels(root_path: str, level: int | None = None) -> LabelImage:
@@ -62,21 +62,9 @@ def load_labels(root_path: str, level: int | None = None) -> LabelImage:
     if level is None:
         level = sorted(h5.attrs_set(f, "level", attrs_select=attrs_select))[0]
     attrs_select = {**attrs_select, **{"level": level}}
-    return _load_roi(root_path=root_path, attrs_select=attrs_select)
+    return _load_arrays(root_path=root_path, attrs_select=attrs_select)
 
 
 def load_channel(root_path: str, h5_path: str) -> SpatialImage:
     f = h5py.File(root_path)
     return to_si(f[h5_path])
-
-
-def _get_intensity_channel_selectors(f: h5py.File) -> list[dict[str, str | int]]:
-    channel_selectors = h5.attrs_set(
-        f,
-        ("stain", "cycle", "wavelength"),
-        attrs_select={"img_type": "intensity"},
-        return_dict=True,
-    )
-    return sorted(
-        channel_selectors, key=lambda x: (x["cycle"], x["wavelength"], x["stain"])
-    )

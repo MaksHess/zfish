@@ -135,7 +135,6 @@ def main():
     lazy_roi_resources_corr.write_tables()
     logger.info(f"{title('Done')}")
 
-
 def title(s: str) -> str:
     return f"{' '+s+' ':=^60}"
 

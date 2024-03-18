@@ -3,7 +3,7 @@ root: "/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1"
 
 image_dir: "imgs"
 
-output_dir: "features_tcorr"
+output_dir: "features_tcorr_v3"
 
 level: 1
 
@@ -88,9 +88,9 @@ features:
 
 
 intensity_correction:
-  t_decay_models: "/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/models_v2/t_decay/correction_factors.parquet"
+  t_decay_models: "/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/models_v3/t_decay/correction_factors.parquet"
   # t_decay_correction_factor_column: "correctionFactor-Exp"
   z_decay_add_model_name_to_feature_path: true
-  z_decay_models: "/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/models_v2/z_decay/ExpNoOffset(features=Centroid-z, loss=huber)"
+  z_decay_models: "/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/models_v3/z_decay/Linear(features=Centroid-z, loss=huber)"
   z_decay_two_step_label: "embryoRaw"
   z_decay_default_models: null

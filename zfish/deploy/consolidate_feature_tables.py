@@ -15,7 +15,8 @@ def main():
     IDX = args.idx
     
     
-    root = Path(r"data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/features_tcorr_v3")
+    root = Path(r"/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/features_tcorr_v3")
+    print(f'consolidating {root.name}')
 
     # OUTPUT_FORMAT: Literal['parquet', 'delta'] = 'parquet' # DELTA WAS SLOWER FOR FULL READS ONLY FASTER FOR PARTIAL READS.
 
@@ -25,9 +26,11 @@ def main():
     if IDX < len(flds):
         out_root = root.parent / f"{root.name}_consolidated"
     else:
-        out_root_delta = root.parent / f"{root.name}_delta"
+        out_root = root.parent / f"{root.name}_delta"
     
+    print(f'output fld: {out_root.name}')
     fns = list(fld.rglob('*.parquet'))
+    print(f'processing: {[fn.name for fn in fns]}')
     objects = pl.Series([fn.stem for fn in fns]).unique(maintain_order=True)
     # %%
     for obj in objects:
@@ -45,4 +48,8 @@ def main():
             df.cast({**COLUMN_CASTS, **{'roi': roi_type, 'object': obj_type}}).write_parquet(out_path)
         else:
             print(f'writing delta {out_path.name!r}...')
-            df.cast({**COLUMN_CASTS, **{'roi': roi_type, 'object': obj_type}}).write_delta(out_root_delta)
+            df.cast({**COLUMN_CASTS, **{'roi': roi_type, 'object': obj_type}}).write_delta(out_path)
+
+if __name__ == '__main__':
+    main()
+

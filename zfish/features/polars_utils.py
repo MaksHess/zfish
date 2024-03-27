@@ -25,11 +25,25 @@ logger = logging.Logger(__name__)
 try:
     pl.Config.load(POLARS_CONFIG_FILE)
 except ValueError:
-    logger.warn(f"polars config file not found in {POLARS_CONFIG_FILE}")
+    logger.warning(f"polars config file not found in {POLARS_CONFIG_FILE}")
 
+
+COLUMN_CASTS = {
+    cs.matches("^acquisition$"): pl.UInt8,
+    cs.matches("Count$|^label$|^parent"): pl.UInt32,
+    cs.matches("^BoundingBox$"): pl.Struct(
+        {
+            **{f"lower-{e}": pl.Int32 for e in ["x", "y", "z"]},
+            **{f"upper-{e}": pl.Int32 for e in ["x", "y", "z"]},
+        }
+    ),
+    cs.matches("Index$"): pl.Struct({e: pl.Int32 for e in ["x", "y", "z"]}),
+}
 FULL_INDEX_COLUMNS = ["roi", "object", "label", "channel", "stain", "acqusition"]
-CAT_DTYPE_COLUMNS = ["roi", "object", "channel", "stain"]
-UINT16_DTYPE_COLUMNS = ["label", "acquisition"]
+CAT_DTYPE_COLUMNS = cs.matches("^roi$|^object$|^channel$|^stain$")
+STRUCT_INT32_INT32_INT32_COLUMNS = cs.by_name("BoundingBox")
+STRUCT_INT32_INT32_COLUMNS = cs.matches("Index$")
+
 
 INDEX = ["roi", "object", "label"]
 
@@ -96,11 +110,18 @@ DEBUG = True
 #     logger.info(f'shape: {df.shape}')
 #     return df
 
-def log(df: pl.DataFrame, message: str | None = 'shape:', func: Callable[[pl.DataFrame, ...], str] = lambda x: f"{x.shape}", **kwargs):
+
+def log(
+    df: pl.DataFrame,
+    message: str | None = "shape:",
+    func: Callable[[pl.DataFrame], str] = lambda x: f"{x.shape}",
+    **kwargs,
+):
     introspection = func(df, **kwargs)
     out_message = f"{message} {introspection}"
     logger.info(out_message)
     return df
+
 
 def id_(df: pl.DataFrame, **kwargs) -> pl.DataFrame:
     return df
@@ -142,6 +163,7 @@ def drop_structs(df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
 
+
 def read_table(
     root: PathLike[str], _object: str = "", use_pyarrow=True
 ) -> pl.DataFrame:
@@ -167,22 +189,27 @@ def scan_table(root: PathLike[str], _object: str = "") -> pl.LazyFrame:
 
     return pl.concat(tables, how="diagonal")
 
-def column_null_count(df: pl.DataFrame, drop_zero_columns=False, sort=True) -> pl.DataFrame:
+
+def column_null_count(
+    df: pl.DataFrame, drop_zero_columns=False, sort=True
+) -> pl.DataFrame:
     df_null_counts = (
-        df.with_columns(cs.by_dtype(pl.Float32, pl.Float64)).fill_nan(None)
+        df.with_columns(cs.by_dtype(pl.Float32, pl.Float64))
+        .fill_nan(None)
         .describe()
-        .filter(pl.col("describe") == "null_count")
-        .select(pl.exclude("describe").cast(pl.Int64))
+        .filter(pl.col("statistic") == "null_count")
+        .select(pl.exclude("statistic").cast(pl.Int64))
         .transpose(
             include_header=True, header_name="feature", column_names=["null_count"]
         )  # , column_names='null_count')
-        .with_columns((pl.col('null_count') / df.height).alias('null_percentage'))
+        .with_columns((pl.col("null_count") / df.height).alias("null_percentage"))
     )
     if sort:
         df_null_counts = df_null_counts.sort("null_count", descending=True)
     if drop_zero_columns:
         return df_null_counts.filter(pl.col("null_count") > 0)
     return df_null_counts
+
 
 def drop_null_columns(
     df: pl.DataFrame,
@@ -201,12 +228,16 @@ def drop_null_columns(
         valid_col = df_nan.select(columns.is_null().any().not_())
     elif strategy == "perc":
         null_percentage = df_nan.select(columns.is_null().sum() / columns.count().sum())
-        valid_col = (null_percentage <= allowed_percentage)
-    keep_columns = valid_col.transpose(include_header=True, header_name="feature", column_names=["keep"]).filter(pl.col("keep"))['feature'].to_list()
-    passthrough_columns = df_nan.select(~columns).columns
-    return df.select(
-            passthrough_columns + keep_columns
+        valid_col = null_percentage <= allowed_percentage
+    keep_columns = (
+        valid_col.transpose(
+            include_header=True, header_name="feature", column_names=["keep"]
+        )
+        .filter(pl.col("keep"))["feature"]
+        .to_list()
     )
+    passthrough_columns = df_nan.select(~columns).columns
+    return df.select(passthrough_columns + keep_columns)
 
 
 def _rename_structs_to_unnest(df: pl.DataFrame, col: str, sep: str = "-") -> pl.Expr:
@@ -235,9 +266,10 @@ def unnest_all_structs(df: pl.DataFrame, sep: str = ".") -> pl.DataFrame:
 
 def nest_structs(
     df: pl.DataFrame,
-    sep="\.",
-    pattern_after_sep: str | Sequence[str] = "[xyz]",
+    sep="\\.", # regex pattern
     pattern_before_sep: str | Sequence[str] = "[A-Z].*",
+    pattern_after_sep: str | Sequence[str] = "[xyz]",
+    nest_pattern_after: bool = True,
 ) -> pl.DataFrame:
     struct_columns = (
         (
@@ -245,43 +277,44 @@ def nest_structs(
             .to_frame()
             .with_columns(
                 [
-                    pl.col("columns").str.extract(
-                        f"^({pattern_before_sep}){sep}({pattern_after_sep})$", 1
-                    ),
                     pl.col("columns")
-                    .str.extract(
-                        f"^({pattern_before_sep}){sep}({pattern_after_sep})$", 2
-                    )
-                    .alias("field_names"),
+                    .str.extract_groups(
+                        f"^({pattern_before_sep}){sep}({pattern_after_sep})$"
+                    ).alias('parts').struct.rename_fields(['before', 'after'])
                 ]
-            )
+            ).unnest('parts')
         )
+    # )
         .drop_nulls()
-        .groupby("columns", maintain_order=True)
+        .group_by("before" if nest_pattern_after else "after", maintain_order=True)
         .agg(pl.all())
         .rows()
     )
-
+    # return struct_columns
     return df.select(
-        [
-            pl.exclude(
-                [
-                    f"^{column_name}{sep}{pattern_after_sep}$"
-                    for column_name, field_names in struct_columns
-                ]
-            ),
+        ~cs.matches(f"^{pattern_before_sep}{sep}{pattern_after_sep}$"),
+        *[
+            # pl.exclude(
+            #     [
+            #         f"^{column_name}{sep}{pattern_after_sep}$"
+            #         for column_name, field_names in struct_columns
+            #     ]
+            # ),
+            
             *[
                 pl.struct(
-                    [f"^{column_name}{sep}{field_name}$" for field_name in field_names]
+                    in_column_names
                 )
                 .struct.rename_fields(field_names)
-                .alias(column_name)
-                for column_name, field_names in struct_columns
+                .alias(out_column_name)
+                for out_column_name, in_column_names, field_names in struct_columns
             ],
         ]
     )
+    
+# df_all.select(~cs.matches(f"^{pattern_before_sep}{sep}{pattern_after_sep}$"),)
 
-
+# %%
 def set_index_dtypes(df: pl.DataFrame) -> pl.DataFrame:
     cat_dtype_columns = [c for c in CAT_DTYPE_COLUMNS if c in df.columns]
     uint16_dtype_columns = [c for c in UINT16_DTYPE_COLUMNS if c in df.columns]
@@ -300,7 +333,8 @@ def set_index_dtypes(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def stack_correlation_metric_by_acquisition(
-    df_corr: pl.DataFrame, corr_map: dict[str, int] = CORRELATION_BY_ACQUISITION_MAP, 
+    df_corr: pl.DataFrame,
+    corr_map: dict[str, int] = CORRELATION_BY_ACQUISITION_MAP,
 ):
     return (
         df_corr.rename(valmap(str, corr_map))
@@ -352,6 +386,22 @@ def _split_feature_name(columns: list[str], sep="_") -> dict[str, dict[str, str]
     for column in columns:
         res[sep.join(column.split(sep)[:-1])][column] = column.split(sep)[-1]
     return dict(res)
+
+
+def split_and_melt_column_name(
+    df: pl.DataFrame,
+    sep: str = "_",
+    pattern_before_sep: str | None = None,
+    pattern_after_sep: str | None = None,
+    new_column_name: str = "resources",
+    index: "SelectorType | Iterable[str] | None" = None,
+    return_list: bool = False,
+):
+    if pattern_before_sep is not None or pattern_after_sep is not None:
+        raise NotImplementedError("upsi")
+    return stack_column_name_to_column(
+        df, sep=sep, column_name=new_column_name, index=index, return_list=return_list
+    )
 
 
 def stack_column_name_to_column(
@@ -496,7 +546,7 @@ def pipe_df_nulls(df, **kwargs):
     return df
 
 
-def plot_nulls_column(
+def plot_null_columns(
     df: pl.DataFrame,
     index: SelectorType = sel.index,
     sort=True,
@@ -505,23 +555,27 @@ def plot_nulls_column(
     max_labeled_features: int = 30,
 ):
     import matplotlib.pyplot as plt
-    
-    null_counts_table  = column_null_count(df, drop_zero_columns=drop_zero_columns, sort=sort)
-    values = null_counts_table['null_percentage']
-    
+
+    null_counts_table = column_null_count(
+        df, drop_zero_columns=drop_zero_columns, sort=sort
+    )
+    values = null_counts_table["null_percentage"]
+
     if ax is None:
         _, ax = plt.subplots(figsize=(2, 6))
-    
+
     ax.plot(values, np.arange(len(values)))
     if len(values) > max_labeled_features:
-        print('tyin')
         take_every_nth = round(len(values) / max_labeled_features)
         ax.set_yticks(np.arange(len(values)), minor=True)
+    else:
+        take_every_nth = 1
     ax.set_yticks(np.arange(len(values))[::take_every_nth])
-    ax.set_yticklabels(null_counts_table['feature'][::take_every_nth])
-    ax.set_xlabel('null percentage')
-    ax.set_ylabel(f'feature ({len(values)})')
-    ax.invert_yaxis()
+    ax.set_yticklabels(null_counts_table["feature"][::take_every_nth])
+    ax.set_xlabel("null percentage")
+    ax.set_ylabel(f"feature ({len(values)})")
+    # ax.invert_yaxis()
+
 
 def plot_df_nulls(
     df: pl.DataFrame,

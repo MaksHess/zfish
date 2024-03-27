@@ -30,7 +30,6 @@ def main():
     
     print(f'output fld: {out_root.name}')
     fns = list(fld.rglob('*.parquet'))
-    print(f'processing: {[fn.name for fn in fns]}')
     objects = pl.Series([fn.stem for fn in fns]).unique(maintain_order=True)
     # %%
     for obj in objects:

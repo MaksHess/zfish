@@ -1,15 +1,11 @@
 # %%
 import argparse
 from pathlib import Path
-from typing import Literal
 
 import polars as pl
-import polars.selectors as cs
 
-from zfish.features.polars_selector import sel
 from zfish.features.polars_utils import COLUMN_CASTS, read_table
 
-# %%
 
 def main():
     parser = argparse.ArgumentParser()
@@ -17,7 +13,7 @@ def main():
     args = parser.parse_args()
     
     IDX = args.idx
-    root = Path(r"Z:\hmax\MARVWY_RESTORED\20220721_ZE4i2_aligned1\features_tcorr_v3")
+    root = Path(r"data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/features_tcorr_v3")
     out_root = root.parent / f"{root.name}_consolidated"
     # out_root_delta = root.parent / f"{root.name}_delta"
     # OUTPUT_FORMAT: Literal['parquet', 'delta'] = 'parquet' # DELTA WAS SLOWER FOR FULL READS ONLY FASTER FOR PARTIAL READS.

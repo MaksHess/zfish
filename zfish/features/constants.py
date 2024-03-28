@@ -94,7 +94,7 @@ class IntensityFeature(PascalCaseStrEnum):
     WEIGHTED_PRINCIPAL_AXES = auto()
     WEIGHTED_PRINCIPAL_MOMENTS = auto()
     MAXIMUM_INDEX = auto()
-    MIMIMUM_INDEX = auto()
+    MINIMUM_INDEX = auto()
     # TODO: Implement if necessary, else delete
     # HISTOGRAM = auto()
 

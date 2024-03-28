@@ -47,8 +47,12 @@ def main():
             df.cast({**COLUMN_CASTS, **{'roi': roi_type, 'object': obj_type}}).write_parquet(out_path)
         else:
             print(f'writing delta {out_path.name!r}...')
-            df.cast({**COLUMN_CASTS, **{'roi': roi_type, 'object': obj_type}}).write_delta(out_path)
+            import re
+            columns = df.columns
+            safe_column_map = {e: re.sub('\\.', '-', e) for e in columns}
+            df.cast({**COLUMN_CASTS, **{'roi': roi_type, 'object': obj_type}}).rename(safe_column_map).write_delta(out_path)
 
 if __name__ == '__main__':
     main()
 
+    

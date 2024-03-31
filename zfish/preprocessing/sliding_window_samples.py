@@ -6,7 +6,8 @@ def capped_stratified_sample(by: str, n: int) -> pl.Expr:
     pass
 
 def stratified_sample(by: str, n: int, seed: int | None = None) -> pl.Expr:
-    return pl.int_range(0, pl.count()).shuffle().over(by) < n
+    return pl.int_range(0, pl.count()).shuffle(seed).over(by) < n
+
 
 def subset_selection(df, expr: pl.Expr = pl.col('cycle').is_between(8, 12)) -> pl.DataFrame:
     return df.filter(expr)

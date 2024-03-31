@@ -24,6 +24,12 @@ TRANSFORMS = {
     'identity': identity,
 }
 
+DEBRIS_OUTLIER_RANGES = [
+    {
+        'feature': 'debris_proba',
+        'upper': 0.3,
+    }
+]
 
 SEGMENTATION_OUTLIER_RANGES = [
     {
@@ -77,7 +83,7 @@ INTENSITY_OUTLIER_RANGES = [
 ]
 
 DEFAULT_OUTLIER_RANGES = SEGMENTATION_OUTLIER_RANGES + INTENSITY_OUTLIER_RANGES
-
+NEW_OUTLIER_RANGES = DEBRIS_OUTLIER_RANGES + SEGMENTATION_OUTLIER_RANGES + INTENSITY_OUTLIER_RANGES
 
 @runtime_checkable
 class Outlier(Protocol):
@@ -94,12 +100,6 @@ class Outlier(Protocol):
     @property
     def upper(self) -> str | None:
         ...
-
-    # def indicate_lower_outlier(self, df: pl.DataFrame) -> pl.Series:
-    #     self.fit(df)
-    #     if self.lower is None:
-    #         return df.select(pl.col(self.feature).is_null()).to_series()
-    #     return df.select(pl.col(self.feature).lt(self.lower)).to_series()
     
     def indicate_lower_outlier(self, df: pl.DataFrame) -> pl.Series:
         self.fit(df)
@@ -107,12 +107,6 @@ class Outlier(Protocol):
         if self.lower is None:
             return df.select(col_expression.is_null()).to_series()
         return df.select(col_expression.lt(self.lower)).to_series()
-
-    # def indicate_upper_outlier(self, df: pl.DataFrame) -> pl.Series:
-    #     self.fit(df)
-    #     if self.upper is None:
-    #         return df.select(pl.col(self.feature).is_null()).to_series()
-    #     return df.select(pl.col(self.feature).gt(self.upper)).to_series()
     
     def indicate_upper_outlier(self, df: pl.DataFrame) -> pl.Series:
         self.fit(df)
@@ -220,6 +214,7 @@ class IQROutlier(Outlier):
             raise AttributeError("Call fit() first")
         return self._upper
 
+DEBRIS_OUTLIERS = tuple(RngOutlier(**rng) for rng in DEBRIS_OUTLIER_RANGES)
 SEGMENTATION_OUTLIERS = tuple(RngOutlier(**rng) for rng in SEGMENTATION_OUTLIER_RANGES)
 INTENSITY_OUTLIERS = tuple(RngOutlier(**rng) for rng in INTENSITY_OUTLIER_RANGES)
 
@@ -271,7 +266,7 @@ def outlier_summary(
             logger.info(f"{n_above:>8,}/{n_total:<8,}={n_above/n_total:>7.2%} above")
 
 
-def remove_outliers(df, outliers: Sequence[Outlier], verbose=True, plot_results=False):
+def drop_outliers(df, outliers: Sequence[Outlier], verbose=True, plot_results=False):
     df_outliers = mark_outliers(df, outliers, verbose=verbose)
     if verbose:
         logger.info(f"{' Removing outliers ':=^50}")
@@ -280,6 +275,9 @@ def remove_outliers(df, outliers: Sequence[Outlier], verbose=True, plot_results=
     if plot_results:
         results_plot(df, df_out, outliers)
     return df_out
+
+def remove_outliers(df, outliers: Sequence[Outlier], verbose=True, plot_results=False):
+    return drop_outliers(df=df, outliers=outliers, verbose=verbose, plot_results=plot_results)
 
 
 def clip_outliers(df, outliers: Sequence[Outlier], verbose=True, plot_results=False):

@@ -4,7 +4,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from os import PathLike
 from pathlib import Path
-from typing import Callable, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence, TypeGuard, cast
 
 import colorcet as cc
 import numpy as np
@@ -14,18 +14,25 @@ import seaborn as sns
 import tqdm
 from polars.type_aliases import JoinStrategy, SelectorType
 from toolz.dicttoolz import valmap
+from typing_extensions import deprecated
 
 from zfish.features.polars_selector import sel
+from zfish.preprocessing.types import AnyFrameT, FrameOrLazy
 
+if TYPE_CHECKING:
+    from polars import Expr
+    from polars.polars import PyExpr
+    from polars.type_aliases import IntoExpr, IntoExprColumn
+    
 POLARS_CONFIG_FILE = (
     r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\features\polars.json"
 )
 
-logger = logging.Logger(__name__)
-try:
-    pl.Config.load(POLARS_CONFIG_FILE)
-except ValueError:
-    logger.warning(f"polars config file not found in {POLARS_CONFIG_FILE}")
+# logger = logging.Logger(__name__)
+# try:
+#     pl.Config.load(POLARS_CONFIG_FILE)
+# except ValueError:
+#     logger.warning(f"polars config file not found in {POLARS_CONFIG_FILE}")
 
 
 COLUMN_CASTS = {
@@ -164,6 +171,7 @@ def drop_structs(df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+@deprecated("this function moved to zfish.features.io")
 def read_table(
     root: PathLike[str], _object: str = "", use_pyarrow=True
 ) -> pl.DataFrame:
@@ -265,12 +273,12 @@ def unnest_all_structs(df: pl.DataFrame, sep: str = ".") -> pl.DataFrame:
 
 
 def nest_structs(
-    df: pl.DataFrame,
-    sep="\\.", # regex pattern
+    df: AnyFrameT,
+    sep="\\.",  # regex pattern
     pattern_before_sep: str | Sequence[str] = "[A-Z].*",
     pattern_after_sep: str | Sequence[str] = "[xyz]",
     nest_pattern_after: bool = True,
-) -> pl.DataFrame:
+) -> AnyFrameT:
     struct_columns = (
         (
             pl.Series("columns", df.columns)
@@ -280,11 +288,14 @@ def nest_structs(
                     pl.col("columns")
                     .str.extract_groups(
                         f"^({pattern_before_sep}){sep}({pattern_after_sep})$"
-                    ).alias('parts').struct.rename_fields(['before', 'after'])
+                    )
+                    .alias("parts")
+                    .struct.rename_fields(["before", "after"])
                 ]
-            ).unnest('parts')
+            )
+            .unnest("parts")
         )
-    # )
+        # )
         .drop_nulls()
         .group_by("before" if nest_pattern_after else "after", maintain_order=True)
         .agg(pl.all())
@@ -300,21 +311,19 @@ def nest_structs(
             #         for column_name, field_names in struct_columns
             #     ]
             # ),
-            
             *[
-                pl.struct(
-                    in_column_names
-                )
+                pl.struct(in_column_names)
                 .struct.rename_fields(field_names)
                 .alias(out_column_name)
                 for out_column_name, in_column_names, field_names in struct_columns
             ],
-        ]
+        ],
     )
-    
+
+
 # df_all.select(~cs.matches(f"^{pattern_before_sep}{sep}{pattern_after_sep}$"),)
 
-# %%
+
 def set_index_dtypes(df: pl.DataFrame) -> pl.DataFrame:
     cat_dtype_columns = [c for c in CAT_DTYPE_COLUMNS if c in df.columns]
     uint16_dtype_columns = [c for c in UINT16_DTYPE_COLUMNS if c in df.columns]
@@ -403,17 +412,94 @@ def split_and_melt_column_name(
         df, sep=sep, column_name=new_column_name, index=index, return_list=return_list
     )
 
+import re
+
+
+def split_and_melt_column_name_expr(
+    column: str,
+    sep: str = "_",
+    pattern_before: str | None = None,
+    pattern_after: str | None = None,
+    column_before_split: bool = True,
+    new_column_name: str = "column",
+    drop_non_matching: bool = False,
+) -> pl.Expr:
+    if pattern_before is None:
+        pattern_before = f'(.*[^{sep}])?'
+    if pattern_after is None:
+        pattern_after = f'([^{sep}].*)?'
+    pattern = re.compile(f"{pattern_before}{sep}{pattern_after}")
+    
+    mo = pattern.match(column)
+    if mo is None:
+            return pl.col(column)
+        
+    values_column, column_name = mo.groups()
+    if not column_before_split:
+        values_column, column_name = column_name, values_column
+        
+    return pl.struct(pl.lit(values_column).alias(new_column_name), pl.col(column).alias(column_name)).alias(column)
+
+
+def split_and_melt_column_names_on(
+    df: FrameOrLazy,
+    sep: str = "_",
+    pattern_before: str | None = None,
+    pattern_after: str | None = None,
+    column_before_split: bool = False,
+    new_column_name: str = "column",
+    index_columns: "str | Iterable[str] | SelectorType" = sel.index,
+) -> pl.LazyFrame:
+    # df = df.lazy()
+    if pattern_before is None:
+        pattern_before = f'.*[^{sep}]'
+    if pattern_after is None:
+        pattern_after = f'[^{sep}].*'
+    pattern = f"^({pattern_before}){sep}({pattern_after})$"
+    
+    split_columns = (
+        (
+            pl.Series("columns", cs.expand_selector(df, ~index_columns))
+            .to_frame()
+            .with_columns(
+                [
+                    pl.col("columns")
+                    .str.extract_groups(
+                        pattern
+                    )
+                    .alias("parts")
+                    .struct.rename_fields(["before", "after"])
+                ]
+            )
+            .unnest("parts")
+        )
+        # )
+        .drop_nulls()
+        .group_by("after" if column_before_split else "before", maintain_order=True)
+        .agg(pl.all())
+        .rows()
+    )
+    out_dfs = []
+    for column_value, old_names, new_names in split_columns:
+        out_dfs.append(df.select(index_columns, pl.lit(column_value).alias(new_column_name), *[pl.col(o).alias(n) for o, n in zip(old_names, new_names)]))
+    # return out_dfs
+    return pl.concat(out_dfs, how='diagonal')
+
+           
+
+def is_selector(s: Any) -> TypeGuard[SelectorType]:
+    return cs.is_selector(s)
 
 def stack_column_name_to_column(
     df: pl.DataFrame,
     sep: str = "_",
     column_name: str = "resources",
-    index: "SelectorType | Iterable[str] | None" = None,
+    index: "SelectorType | tuple[str, ...] | None" = None,
     return_list: bool = False,
 ) -> pl.DataFrame:
     if index is None:
-        index = tuple(df.idx.active)
-    elif cs.is_selector(index):
+        index = sel.index
+    if is_selector(index):
         index = cs.expand_selector(df, index)
     split = _split_feature_name([e for e in df.columns if e not in index], sep=sep)
     static_columns = list(split.get("", dict()).keys())
@@ -484,6 +570,11 @@ def split_column(
     )
 
 
+from typing import TypeAlias
+
+Index: TypeAlias = str | Sequence[str] | SelectorType
+
+
 def split_channel_column(
     df: pl.DataFrame,
     index=("roi", "object", "label"),
@@ -500,7 +591,7 @@ def split_channel_column(
 def split_channel_pair_column(
     df: pl.DataFrame,
     index: tuple[str, ...] = ("roi", "object", "label"),
-    force_reference_column: str | None = "DAPI.1",
+    force_reference_column: Literal["auto"] | str | None = "DAPI.1",
 ) -> pl.DataFrame:
     df_split = split_column(
         df=df,
@@ -509,7 +600,7 @@ def split_channel_pair_column(
         sep="|",
         index=index,
     )
-    if force_reference_column:
+    if force_reference_column is not None:
         df_split = df_split.with_columns(
             [
                 pl.when(pl.col("channel") == force_reference_column)

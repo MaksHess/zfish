@@ -32,7 +32,22 @@ META_COLUMNS = reduce(
         ]
     ],
 )
+CONTROL_WELLS = ['B07', 'C07', 'D07', 'E07']
 
+def add_pooled_cycle(df: pl.DataFrame) -> pl.DataFrame:
+    return (
+    df.with_columns(
+        pl.col("cycle")
+        .cut([9.5, 10.5, 11.5], labels=["7-8-9", "10", "11", "12"])
+        .alias("cycle_pooled_name")
+        .cast(pl.Utf8)
+    )
+    .with_columns(
+        pl.col("cycle_pooled_name")
+        .map_dict({"7-8-9": 9, "10": 10, "11": 11, "12": 12})
+        .alias("cycle_pooled")
+    )
+    )  
 
 def get_metadata(
     df: AnyFrameT,
@@ -90,7 +105,7 @@ def get_metadata(
         )
         .select("roi", "parent.embryoRaw", "embryo"),
         on=cs.expand_selector(df_meta, parent_selector),
-    )
+    ).pipe(add_pooled_cycle)
 
 
 def get_metadata_old(

@@ -5,7 +5,7 @@ from operator import or_
 from typing import TYPE_CHECKING
 
 import polars.selectors as cs
-from attrs import define
+from attrs import define, field, make_class
 
 from zfish.features.constants import (
     ColocalizationFeature,
@@ -19,17 +19,18 @@ if TYPE_CHECKING:
     from polars.type_aliases import SelectorType
 
 
-LABEL_PATTERN = "^{}((.lower)|(.upper))?(\W[abc])?(\W[xyz])?$"
+LABEL_PATTERN = r"^{}((.lower)|(.upper)|(Direction)|(Vertices)|(Size)|(Origin))?(\W[abc])?(\W[xyz])?$"
 
-CHANNEL_PATTERN = "([a-zA-Z0-9-]+)\.(\d+)"
-INTENSITY_PATTERN = "^(" + CHANNEL_PATTERN + "_)?{}(\W[abc])?(\W[xyz])?$"
+# CHANNEL_PATTERN = r"([a-zA-Z0-9-]+)\.(\d+)"
+CHANNEL_PATTERN = r"([a-zA-Z0-9-]+)[.-](\d+)"
+INTENSITY_PATTERN = rf"^({CHANNEL_PATTERN}_)?{'{}'}(\W[abc])?(\W[xyz])?$"
 
-CHANNEL_PAIR_PATTERN = f"{CHANNEL_PATTERN}\W{CHANNEL_PATTERN}"
+CHANNEL_PAIR_PATTERN = rf"{CHANNEL_PATTERN}\W{CHANNEL_PATTERN}"
 
-COLOC_PATTERN = "^(" + CHANNEL_PAIR_PATTERN + "_)?{}$"
+COLOC_PATTERN = f"^({CHANNEL_PAIR_PATTERN}_)?{'{}'}$"
 # COLOC_PATTERN = "^([a-zA-Z0-9-]+\W\d+\W[a-zA-Z0-9-]+\W\d+_)?{}$"
 
-DISTANCE_PATTERN = "^(([a-zA-Z0-9-]+)\W(\d+)_)?{}{}$"
+DISTANCE_PATTERN = r"^(([a-zA-Z0-9-]+)\W(\d+)_)?{}{}(\W[xyz])?$"
 
 LABEL = reduce(or_, [cs.matches(LABEL_PATTERN.format(f)) for f in LabelFeature])
 INTENSITY = reduce(
@@ -46,19 +47,19 @@ DISTANCE = reduce(
     ],
 )
 DENSITY = (
-    cs.matches("^DELAUNAY:\d+_Count$")
-    | cs.matches("^TOUCH:\d+_Count$")
-    | cs.matches("^RAD:\d+(\.\d+)?_Count$")
-    | cs.matches("^KNNd:\d+_")
+    cs.matches(r"^DELAUNAY:\d+_Count$")
+    | cs.matches(r"^TOUCH:\d+_Count$")
+    | cs.matches(r"^RAD:\d+(\W\d+)?_Count$")
+    | cs.matches(r"^KNNd:\d+_")
 )
 NEIGHBORHOOD = (
-    cs.matches("^DELAUNAY:\d+_.*$")
-    | cs.matches("^TOUCH:\d+_.*$")
-    | cs.matches("^RAD:\d+(\.\d+)?_.*$")
-    | cs.matches("^KNNd:\d+_.*$")
+    cs.matches(r"^DELAUNAY(s)?:\d+_.*$")
+    | cs.matches(r"^TOUCH(s)?:\d+_.*$")
+    | cs.matches(r"^RAD(s)?:\d+(\W\d+)?_.*$")
+    | cs.matches(r"^KNN(d)?(s)?:\d+_.*$")
 )
 FEATURES = LABEL | INTENSITY | COLOC | DISTANCE | DENSITY | NEIGHBORHOOD
-HIERARCHY = cs.matches("^parent\W.+$")
+HIERARCHY = cs.matches(r"^parent\W.+$")
 FULL_INDEX = (
     cs.matches("^well$")
     | cs.matches("^roi$")
@@ -74,24 +75,32 @@ SITE_INDEX = (
     cs.matches("^roi$") | HIERARCHY | cs.matches("^object$") | cs.matches("^label$")
 )
 
+OBJECT_INDEX = SITE_INDEX - HIERARCHY
 
 @define(frozen=True)
 class MySelector:
-    empty: "SelectorType" = cs.matches(
-        "^#_EMPTY_#$"
-    )  # just a token that should not match anything!
+    empty: "SelectorType" = ~cs.all()
     index: "SelectorType" = FULL_INDEX
     site_index: "SelectorType" = SITE_INDEX
+    obj_index: "SelectorType" = OBJECT_INDEX
     meta: "SelectorType" = ~FEATURES
     hierarchy: "SelectorType" = HIERARCHY
-    features: "SelectorType" = FEATURES
     label: "SelectorType" = LABEL
     intensity: "SelectorType" = INTENSITY
     correlation: "SelectorType" = COLOC
     distance: "SelectorType" = DISTANCE
     density: "SelectorType" = DENSITY
     neighborhood: "SelectorType" = NEIGHBORHOOD
+    features: "SelectorType" = FEATURES
+    
+    def expand(self, df):
+        return expand_selector(df, self)
 
+
+ExpandedSelector = make_class('ExpandedSelector', attrs={attr.name: field(type=tuple[str, ...]) for attr in MySelector.__attrs_attrs__})
+
+def expand_selector(df, sel: MySelector) -> "ExpandedSelector":
+    return ExpandedSelector(**{attr.name: cs.expand_selector(df, getattr(sel, attr.name)) for attr in sel.__attrs_attrs__})
 
 sel = MySelector()
 

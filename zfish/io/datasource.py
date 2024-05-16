@@ -16,7 +16,7 @@ from spatial_image import SpatialImage, to_spatial_image
 from toolz.itertoolz import take
 
 from zfish.features.types import LabelImage, SpatialImage
-from zfish.image.image import to_si
+from zfish.image.h5_io import to_si
 from zfish.roi.spatial_roi import Roi
 
 DEFAULT_RNG = np.random.default_rng(42)
@@ -65,7 +65,7 @@ def _hierarchical_labels_np_3d(
     if "cyto" in objects and "nuc" in objects and "cell" in objects:
         lbls.append(np.where(lbls[-1] == 0, lbls[-2], 0))
     if "loc" in objects:
-        lbls.append(_gridded_ellipsoids(shape, (2, 24, 24)))
+        lbls.append(_gridded_ellipsoids(shape, (12, 24, 24), axes_range=(0.2, 1.0)))
     lbl_stack = np.stack(lbls)
     return lbl_stack
 
@@ -462,9 +462,10 @@ def get_roi(
         shape=shape,
         scale=scale,
         objects=("emb", "cell", "nuc", "cyto", "loc")[:n_labels],
-    ).rename({'c': 'l'})
+    ).rename({"c": "l"})
     channels = get_image_si(shape=(n_channels, *shape), scale=scale)
-    return Roi(name='roi', data=dict(labels=labels, images=channels))
+    return Roi(name="roi", data=dict(labels=labels, images=channels))
+
 
 def get_image_si(
     shape: Sequence[int],
@@ -478,14 +479,17 @@ def get_image_si(
     assert ndims < 6, f"image cannot have > 5 dimensions: {ndims=}"
     if dims is None:
         dims = ("t", "c", "z", "y", "x")[-ndims:]
-    if "c" in dims:
+    if "c" in dims and c_coords is None:
         c_shape = shape[dims.index("c")]
         c_coords = [f"ch{i}" for i in range(c_shape)]
+    elif "c" in dims:
+        c_shape = shape[dims.index("c")]
+        assert  c_shape == len(c_coords), f"shape dim c ({c_shape}) not equal len(c_coords): ({len(c_coords)})"
     spatial_dims = tuple(e for e in dims if e in SPATIAL_DIMS)
     ndims_spatial = len(spatial_dims)
     if scale is None:
         scale = (1.0,) * ndims_spatial
-    data = ImageGen[dims](shape, dtype, seed)
+    data = ImageGen[dims](shape=shape, dtype=dtype, seed=seed)
     return to_spatial_image(
         data,
         dims=dims,
@@ -538,7 +542,9 @@ def image_np(
     dtype: type = np.uint16,
     seed: int | None = 42,
 ) -> NDArray[Number]:
-    return image_si(shape=shape, dims=dims, scale=scale, dtype=dtype, seed=seed).data
+    return get_image_si(
+        shape=shape, dims=dims, scale=scale, dtype=dtype, seed=seed
+    ).data
 
 
 def label_np(
@@ -559,7 +565,7 @@ def image_itk(
     seed: int | None = 42,
 ) -> ImageLike:
     return itk.image_from_xarray(
-        image_si(shape=shape, dims=dims, scale=scale, dtype=dtype, seed=seed)
+        get_image_si(shape=shape, dims=dims, scale=scale, dtype=dtype, seed=seed)
     )
 
 

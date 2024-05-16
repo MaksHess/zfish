@@ -1,10 +1,11 @@
-from pathlib import Path
-import pandas as pd
-import numpy as np
-from tqdm import tqdm
-from typing import Union, Optional, Sequence
-import anndata as ad
 from functools import reduce
+from pathlib import Path
+from typing import Optional, Sequence, Union
+
+import anndata as ad
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
 
 
 def main():

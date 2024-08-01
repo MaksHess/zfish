@@ -1,6 +1,7 @@
 # %%
 from functools import reduce
 from operator import add, mul
+from typing import cast
 
 import holoviews as hv
 import numpy as np
@@ -27,7 +28,7 @@ from zfish.intensity_normalization.models import (
 )
 from zfish.visualize.plot_utils import data_range
 
-hv.extension("plotly")
+hv.extension("plotly") # noqa
 hv.output(widget_location="bottom")
 pio.templates["gridon"].update( #show grids also for scene (i. e. 3d axes)
     dict(

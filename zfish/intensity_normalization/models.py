@@ -23,9 +23,6 @@ from zfish.features.types import SpatialImage
 Parameters: TypeAlias = tuple[float, ...]
 ModelCallable: TypeAlias = Callable[[NDArray[Any], Unpack[Parameters]], NDArray[Any]]
 
-# Parameters: TypeAlias = Sequence[float]
-# ModelCallable: TypeAlias = Callable[[NDArray[Any], Parameters], NDArray[Any]]
-
 
 def to_numpy_or_xarray(X):
     pass
@@ -51,23 +48,26 @@ def exponential_model_with_offset(
     return A0 * np.prod(np.exp(X * coef), axis=1) + C
 
 
-def power_law(
-    X: ArrayLike, A0: float, *coef: float) -> NDArray[Any]:
+def power_law(X: ArrayLike, A0: float, *coef: float) -> NDArray[Any]:
     """Power law model of the form:
     y = A0 * (x1**b1 * x2**b2 * ... * xn**bn)"""
     return A0 * np.prod(X**coef, axis=1)
 
 
 def power_law_with_offset(
-    X: ArrayLike, A0: float, C, *coef: float) -> NDArray[Any]:
+    X: ArrayLike, A0: float, C: float, *coef: float
+) -> NDArray[Any]:
     """Power law model of the form:
-    y = A0 * (x1**b1 * x2**b2 * ... * xn**bn)"""
+    y = A0 * (x1**b1 * x2**b2 * ... * xn**bn) + C"""
     return A0 * np.prod(X**coef, axis=1) + C
+
 
 CALLABLES: dict[str, ModelCallable] = {
     "linear": linear_model,
     "exponential_no_offset": exponential_model_glm,
     "exponential": exponential_model_with_offset,
+    "power_law": power_law,
+    "power_law_with_offset": power_law_with_offset,
 }
 
 
@@ -449,13 +449,13 @@ def lazy_apply_model_to_channel(
     model: Model,
     channel_si: SpatialImage,
     label_si: SpatialImage | None = None,
-    correction_factor_clip_range: tuple[float, float] | None = (0.0, 50.0)
+    correction_factor_clip_range: tuple[float, float] | None = (0.0, 50.0),
 ) -> SpatialImage:
     # Convert to dask-array
-    channel_si_da = channel_si.chunk('auto')
+    channel_si_da = channel_si.chunk("auto")
     if label_si is not None:
-        label_si_da = label_si.chunk('auto')
-    
+        label_si_da = label_si.chunk("auto")
+
     if model._feature_names == ["Centroid-z"]:
         correction_factors = model._correction_factor(
             channel_si_da.coords["z"].expand_dims(["_"], -1)
@@ -470,22 +470,26 @@ def lazy_apply_model_to_channel(
         assert (
             label_si is not None
         ), "Provide embryo segmentation for 2-step correction."
-        embryo_path_si = (label_si_da).cumsum(dim="z") * label_si_da.meta.scale_dict["z"]
+        embryo_path_si = (label_si_da).cumsum(dim="z") * label_si_da.meta.scale_dict[
+            "z"
+        ]
         medium_path_si = (~label_si_da.astype(bool)).cumsum(
             dim="z"
         ) * label_si_da.meta.scale_dict["z"]
 
-        with dask.config.set(
-            **{"array.slicing.split_large_chunks": False}
-        ):
+        with dask.config.set(**{"array.slicing.split_large_chunks": False}):
             X = np.stack(
                 [medium_path_si.data.flatten(), embryo_path_si.data.flatten()]
             ).T
             # X = np.concatenate([medium_path_si, embryo_path_si]).reshape(2, -1).T
-            correction_factors = model._correction_factor(X).T.reshape(channel_si_da.shape)
+            correction_factors = model._correction_factor(X).T.reshape(
+                channel_si_da.shape
+            )
             if correction_factor_clip_range is not None:
                 lb, ub = correction_factor_clip_range
-                correction_factors[np.logical_or(correction_factors < lb, correction_factors > ub)] = ub
+                correction_factors[
+                    np.logical_or(correction_factors < lb, correction_factors > ub)
+                ] = ub
         return (channel_si_da * correction_factors).rename("image")
 
     else:

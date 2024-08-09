@@ -1,0 +1,65 @@
+root: "/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1"
+# root: "M:\\marvwy\\20220721_ZE4i2_aligned"
+
+image_dir: "imgs"
+
+output_dir: "features_pixelcorr"
+
+level: 1
+
+features:
+  label:
+  - labelss:
+    - 'nucleiRaw3'
+    - 'cells'
+    - 'cyto'
+    - 'membrane'
+    - 'embryoRaw'
+    props:
+    - "BoundingBox"
+    - "Centroid"
+
+  correlation:
+  - labelss:
+    - 'nucleiRaw3'
+    - 'cells'
+    - 'cyto'
+    - 'membrane'
+    - 'embryoRaw'
+    channel_pairs:
+    # DAPI baseline
+    - channel_0: "DAPI.1"
+      channel_1: "DAPI.0"
+    - channel_0: "DAPI.1"
+      channel_1: "DAPI.2"
+    - channel_0: "DAPI.1"
+      channel_1: "DAPI.3"
+    # Restained channels
+    - channel_0: "Pol-II-S2P.0"
+      channel_1: "Pol-II-S2P.3"
+    - channel_0: "FLAG.0"
+      channel_1: "FLAG.3"
+    - channel_0: "PCNA.0"
+      channel_1: "PCNA.3"
+    - channel_0: "H3K27Ac.1"
+      channel_1: "H3K27Ac.3"
+    - channel_0: "bCatenin.1"
+      channel_1: "bCatenin.3"
+    - channel_0: "pH3.1"
+      channel_1: "pH3.3"
+    - channel_0: "H2B.2"
+      channel_1: "H2B.3"
+    - channel_0: "ALYREF.2"
+      channel_1: "ALYREF.3"
+    - channel_0: "Pol-II-S5P.2"
+      channel_1: "Pol-II-S5P.3"
+    props:
+    - "PearsonR"
+    - "SpearmanR"
+    - "KendallTau"
+
+intensity_correction:
+  t_decay_models: "/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/models_v2/t_decay/correction_factors.parquet"
+  z_decay_models: null
+  z_decay_add_model_name_to_feature_path: true
+  z_decay_default_models: null

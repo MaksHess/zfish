@@ -1,5 +1,5 @@
-resource_path: C:\Users\hessm\Documents\Programming\Python\zfish\zfish\multi_table\data
-output_path: test
+resource_path: "/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/multi_tables"
+output_path: "/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/multi_tables/features"
 channel_pairs:
 - - DAPI.0
   - DAPI.3

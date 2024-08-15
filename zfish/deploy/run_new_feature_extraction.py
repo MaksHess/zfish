@@ -37,7 +37,7 @@ SLURM_COMMAND = """#!/usr/bin/env bash
 source ~/.bashrc
 conda activate zfish
 
-exec python feature_extraction.py $SLURM_ARRAY_TASK_ID -p {1}
+exec python new_feature_extraction.py $SLURM_ARRAY_TASK_ID -p {1}
 """
 
 

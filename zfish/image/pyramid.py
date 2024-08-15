@@ -8,7 +8,8 @@ import itk
 import numpy as np
 import xarray as xr
 from numpy.typing import ArrayLike
-from zfish.abbott_legacy.conversions import to_itk
+
+# from zfish.abbott_legacy.conversions import to_itk
 from zfish.features.types import LabelImage, SpatialImage
 from zfish.image.h5_io import to_si
 
@@ -156,7 +157,7 @@ def resample_label(
 ) -> LabelImage:
     """ "Adapted from `multiscale_spatial_image.to_multiscale`. 'magic-value' 0.7355 used there."""
 
-    input_image = to_itk(image)
+    input_image = itk.image_from_xarray(image)
     input_spacing = itk.spacing(input_image)
     input_size = itk.size(input_image)
     input_origin = itk.origin(input_image)
@@ -270,7 +271,7 @@ def __label_pyramid(
 
 
 def __image_pyramid(image: SpatialImage, n: int = 4, start_shrink_factors=None):
-    img = to_itk(image)
+    img = itk.image_from_xarray(image)
     spacing = np.array(img.GetSpacing())
     if start_shrink_factors is None:
         start_shrink_factors = tuple(
@@ -336,7 +337,7 @@ def _all_recursive_shrink_factors(scale, n: int, shrink_factor=2):
 def image_pyramid(
     image: SpatialImage, n: int = 4, shrink_factor: int = 2, start_level: int = 0
 ):
-    img = to_itk(image)
+    img = itk.image_from_xarray(image)
     spacing = np.array(img.GetSpacing())
     schedule = _pyramid_schedule(spacing, n=n, shrink_factor=shrink_factor)
 

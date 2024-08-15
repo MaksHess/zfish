@@ -48,6 +48,7 @@ out_handler.setFormatter(
 # logger.addHandler(err_handler)
 logger.addHandler(out_handler)
 
+
 # FIXME: write parameter file to output folder
 def main():
     logger.info(f"{title('Starting Feature Extraction')}")
@@ -135,6 +136,7 @@ def main():
     lazy_roi_resources_corr.write_tables()
     logger.info(f"{title('Done')}")
 
+
 def title(s: str) -> str:
     return f"{' '+s+' ':=^60}"
 
@@ -188,6 +190,3 @@ def process_queries(
 
 if __name__ == "__main__":
     main()
-
-
-# %%

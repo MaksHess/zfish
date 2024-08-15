@@ -1,0 +1,58 @@
+resource_path: C:\Users\hessm\Documents\Programming\Python\zfish\zfish\multi_table\data
+output_path: test
+channel_pairs:
+- - DAPI.0
+  - DAPI.3
+- - Pol-II-S2P.0
+  - Pol-II-S2P.3
+- - FLAG.0
+  - FLAG.3
+- - PCNA.0
+  - PCNA.3
+- - DAPI.1
+  - DAPI.3
+- - H3K27Ac.1
+  - H3K27Ac.3
+- - bCatenin.1
+  - bCatenin.3
+- - pH3.1
+  - pH3.3
+- - DAPI.2
+  - DAPI.3
+- - H2B.2
+  - H2B.3
+- - ALYREF.2
+  - ALYREF.3
+- - Pol-II-S5P.2
+  - Pol-II-S5P.3
+features:
+- PearsonR
+- SpearmanR
+- KendallTau
+levels:
+- 0
+- 1
+- 2
+object_types:
+- embryoRaw
+- nucleiRaw3
+- cells
+- cyto
+- membrane
+parallelize_over:
+- idx.m
+- idx.roi
+process_queries: any_valid
+rois: null
+t_model: null
+wells:
+- B06
+- C06
+- D06
+- E06
+- F06
+- F07
+- G05
+- G06
+- G07
+z_model: null

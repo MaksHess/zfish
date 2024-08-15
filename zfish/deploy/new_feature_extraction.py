@@ -79,6 +79,12 @@ def main():
     subquery_suffix = subquery_suffix = "__".join(
         f"{e}={n}" for e, n in zip(params.parallelize_over, query_id)
     )
+    out_file = params.output_path / f"features.correlation__{subquery_suffix}.parquet"
+    if out_file.exists():
+        logger.info(f"output file {out_file!r} exists.")
+        logger.info("skipping...")
+        logger.info("done.")
+        return
     logger.info(f"batch name: {subquery_suffix}")
     logger.info(f"# queries:  {df_q.height}")
 
@@ -136,9 +142,8 @@ def main():
         ~cs.by_name(["idx.roi", "idx.o", "idx.label", "idx.m", "idx.c.0", "idx.c.1"]),
     )
 
-    params.output_path.mkdir(exist_ok=True)
-    out_file = params.output_path / f"features.correlation__{subquery_suffix}.parquet"
     logger.info(f"writing output table ({out_file.name})")
+    params.output_path.mkdir(exist_ok=True)
     df_out.write_parquet(out_file)
     logger.info("done.")
 

@@ -66,7 +66,7 @@ def main():
         channel_pairs=params.channel_pairs,
         object_types=params.object_types,
         features=params.features,
-        return_queries=params.return_queries,
+        return_queries=params.process_queries,
     )
 
     dfs_sub_queries = list(

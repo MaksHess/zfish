@@ -51,7 +51,7 @@ def main():
         CorrelationFeatureExtractionParams, args.feature_extraction_params
     )
 
-    r = read_resources(params.resource_path)
+    r = read_resources(params.resource_path, use_pyarrow=False)
     df_all_queries = _construct_correlation_queries(
         r,
         levels=params.levels,

@@ -56,7 +56,7 @@ def main():
     )
 
     logger.info("loading resource tables.")
-    r = read_resources(params.resource_path)
+    r = read_resources(params.resource_path, use_pyarrow=False)
     logger.info("constructing all queries & selecting query batch.")
     df_all_queries = _construct_correlation_queries(
         r,

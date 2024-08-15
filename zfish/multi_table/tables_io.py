@@ -106,6 +106,7 @@ def write_tables(
     tables: dict[str, pl.DataFrame],
     overwrite: bool = False,
     write_empty: bool = False,
+    use_pyarrow: bool = True,
 ):
     if not overwrite:
         for name in tables.keys():
@@ -118,10 +119,10 @@ def write_tables(
         table_path = Path(path) / f"{name}.parquet"
         table_path.parent.mkdir(exist_ok=True)
         if write_empty:
-            table.write_parquet(table_path)
+            table.write_parquet(table_path, use_pyarrow=use_pyarrow)
         else:
             if table.height > 0:
-                table.write_parquet(table_path)
+                table.write_parquet(table_path, use_pyarrow=use_pyarrow)
 
 
 class LazyTablesBase(TablesBaseMixin):
@@ -184,6 +185,7 @@ class TablesBase(TablesBaseMixin):
         path: str,
         name_map: dict[str, str] = TABLE_NAME_MAP,
         include_tables: tuple[str, ...] | None = None,
+        use_pyarrow: bool = True,
     ) -> Self:
         if include_tables is None:
             load_table_names = cls._table_names
@@ -197,6 +199,7 @@ class TablesBase(TablesBaseMixin):
             table_names=tuple(
                 [name_map[table_name] for table_name in load_table_names]
             ),
+            use_pyarrow=use_pyarrow,
         )
         renamed_tables = {k: tables[name_map.get(k, k)] for k in load_table_names}
         return cls.from_tables(renamed_tables)
@@ -341,9 +344,14 @@ def scan_resources_and_features(
 
 
 def read_resources(
-    root: str = TABLES_PATH, name_map: dict[str, str] = TABLE_NAME_MAP, **kwargs
+    root: str = TABLES_PATH,
+    name_map: dict[str, str] = TABLE_NAME_MAP,
+    use_pyarrow=True,
+    **kwargs,
 ) -> Resources:
-    resources = Resources.from_path(root, name_map=TABLE_NAME_MAP, **kwargs)
+    resources = Resources.from_path(
+        root, name_map=TABLE_NAME_MAP, use_pyarrow=use_pyarrow, **kwargs
+    )
     return resources
 
 

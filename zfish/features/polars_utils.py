@@ -1,10 +1,15 @@
 # %%
 import logging
+import re
 from collections import defaultdict
 from collections.abc import Iterable
+from enum import Enum
+from functools import reduce
+from operator import add
 from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence, TypeGuard, cast
+from warnings import warn
 
 import colorcet as cc
 import numpy as np
@@ -13,22 +18,23 @@ import polars.selectors as cs
 import seaborn as sns
 import tqdm
 from polars.type_aliases import JoinStrategy, SelectorType
+from strenum import StrEnum
 from toolz.dicttoolz import valmap
 from typing_extensions import deprecated
 
-from zfish.features.polars_selector import sel
+from zfish.features.polars_selector import sel as _sel
 from zfish.preprocessing.types import AnyFrameT, FrameOrLazy
 
 if TYPE_CHECKING:
     from polars import Expr
     from polars.polars import PyExpr
     from polars.type_aliases import IntoExpr, IntoExprColumn
-    
+
 POLARS_CONFIG_FILE = (
     r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\features\polars.json"
 )
 
-# logger = logging.Logger(__name__)
+logger = logging.Logger(__name__)
 # try:
 #     pl.Config.load(POLARS_CONFIG_FILE)
 # except ValueError:
@@ -222,7 +228,7 @@ def column_null_count(
 def drop_null_columns(
     df: pl.DataFrame,
     columns: SelectorType = cs.all(),
-    strategy: Literal["any", "all", "perc"] | float = "perc",
+    strategy: Literal["any", "all", "perc"] | float = "all",
     allowed_percentage=0.3,
     include_nan=True,
 ) -> pl.DataFrame:
@@ -248,9 +254,36 @@ def drop_null_columns(
     return df.select(passthrough_columns + keep_columns)
 
 
-def _rename_structs_to_unnest(df: pl.DataFrame, col: str, sep: str = "-") -> pl.Expr:
+def drop_null_rows(
+    df: pl.DataFrame,
+    columns: SelectorType = cs.all(),
+    strategy: Literal["any", "all", "perc"] | float = "all",
+    allowed_percentage=0.3,
+    include_nan=True,
+) -> pl.DataFrame:
+    if include_nan:
+        df_nan = df.with_columns(cs.by_dtype(pl.Float32, pl.Float64).fill_nan(None))
+    else:
+        df_nan = df
+    if strategy == "all":
+        # row_filter_pred = ~pl.all_horizontal(columns.is_null())
+        row_filter_pred = ~pl.all_horizontal(
+            pl.col(cs.expand_selector(df_nan, columns)).is_null()
+        )
+    elif strategy == "any":
+        row_filter_pred = ~pl.any_horizontal(columns.is_null())
+    elif strategy == "perc":
+        null_percentage = pl.sum_horizontal(columns.is_null()) / len(
+            cs.expand_selector(df_nan, columns)
+        )
+        row_filter_pred = null_percentage <= allowed_percentage
+    return df_nan.filter(row_filter_pred)
+    # return row_filter_pred
+
+
+def _unnest_renaming_expression(df: pl.DataFrame, col: str, sep: str = "-") -> pl.Expr:
     return pl.col(col).struct.rename_fields(
-        [f"{col}{sep}{k}" for k in df[col][0].keys()]
+        [f"{col}{sep}{f.name}" for f in df.schema.get(col).fields]
     )
 
 
@@ -262,7 +295,7 @@ def unnest_structs(
     return df.select(
         [
             pl.exclude(cols),
-            *[_rename_structs_to_unnest(df, col, sep=sep) for col in cols],
+            *[_unnest_renaming_expression(df, col, sep=sep) for col in cols],
         ]
     ).unnest(cols)
 
@@ -270,6 +303,424 @@ def unnest_structs(
 def unnest_all_structs(df: pl.DataFrame, sep: str = ".") -> pl.DataFrame:
     cols = [col for col, dtype in zip(df.columns, df.dtypes) if dtype == pl.Struct]
     return unnest_structs(df, cols, sep=sep)
+
+
+POLARS_CONFIG = {"large": dict(fmt_str_lengths=50, tbl_rows=30)}
+
+
+class NestingStrategy(StrEnum):
+    SPLIT = "split"
+    IGNORE_START = "ignore_start"
+
+
+def _get_table_for_column_nesting(
+    df,
+    sep=".-?",
+    to_level=0,
+    ignore_pattern=r".*_[A-Z]",
+    separator_in_name: Literal["before", "after", "drop"] = "before",
+    allow_singleton_nesting=False,
+    nesting_strategy: NestingStrategy = NestingStrategy.IGNORE_START,
+):
+    if nesting_strategy == NestingStrategy.IGNORE_START:
+        SEP = re.escape(sep)
+        PATTERN = rf"(?:{ignore_pattern})?([^\n{SEP}]+)?([{SEP}])?"
+        # PATTERN = rf"(?:{ignore_pattern})?([^\n({SEP})]+)?([({SEP})])?"
+        column_components = (
+            pl.Series("columns", df.columns)
+            .to_frame()
+            .with_columns(
+                pl.col("columns").str.extract_all(PATTERN).alias("components")
+            )
+            # .explode('components')
+            # .pipe(debug)
+        )
+    elif nesting_strategy == NestingStrategy.SPLIT:
+        column_components = (
+            pl.Series("columns", df.columns)
+            .to_frame()
+            .with_columns(
+                pl.col("columns").str.split(sep, inclusive=True).alias("components")
+            )
+            .with_columns(pl.col("components").list.slice(0, pl.len() - 1))
+        )
+
+    LEN_SEP = len(sep) if nesting_strategy == "split" else 1
+    long_table = (
+        column_components.with_row_index()
+        .explode("components")
+        .with_columns(
+            # pl.col('components'),
+            pl.col("components"),
+            pl.int_range(0, pl.len()).over("index").alias("level"),
+        )
+        .with_columns(
+            (pl.col("level") != pl.col("level").max()).over("index").alias("must_split")
+        )
+        .with_columns(
+            pl.when(pl.col("must_split"))
+            .then(
+                pl.concat_list(
+                    pl.col("components").str.slice(
+                        0, pl.col("components").str.len_chars() - LEN_SEP
+                    ),
+                    pl.col("components").str.slice(
+                        (pl.col("components").str.len_chars() - LEN_SEP)
+                    ),
+                )
+            )
+            .otherwise(pl.concat_list(pl.col("components")))
+            .alias("components_with_sep")
+        )
+        .explode("components_with_sep")
+        .with_columns(
+            (pl.col("level").diff(n=-1) == -1).fill_null(False).alias("is_separator")
+        )
+        .with_columns(
+            (pl.col("level") + pl.col("is_separator")).alias("level_sep_after")
+        )
+        .select(
+            pl.col("index"),
+            pl.col("columns"),
+            pl.col("components"),
+            pl.col("level"),
+            pl.col("level_sep_after"),
+            pl.col("components_with_sep"),
+            pl.col("is_separator"),
+        )
+        .group_by(
+            "index",
+            "columns",
+            *(
+                (
+                    pl.col("level_sep_after").alias("level")
+                    if separator_in_name == "after"
+                    else "level"
+                ),
+                "is_separator",
+            ),
+            maintain_order=True,
+        )
+        .agg(pl.col("components_with_sep"))
+        .with_columns(pl.col("components_with_sep").list.join(""))
+        # .filter(~pl.col('is_separator') if separator_in_name == 'drop' else True)
+        # .group_by('index', 'columns', 'level', maintain_order=True).agg(pl.col('components_with_sep')).with_columns(pl.col('components_with_sep').list.join(''))
+        # .pipe(debug)
+    )
+    return long_table
+
+
+def nest_selector(
+    df,
+    sep=".-?",
+    to_level=0,
+    method=NestingStrategy.SPLIT,
+    ignore_pattern=r".*_[A-Z]",
+    separator_in_name: Literal["before", "after", "drop"] = "after",
+    allow_singleton_nesting=False,
+    column_selector=cs.all(),
+):
+    columns_to_nest = cs.expand_selector(df, column_selector)
+    columns_to_ignore = cs.expand_selector(df, ~column_selector)
+
+    # columns_to_nest_index = [df.get_column_index(c) for c in columns_to_nest]
+    # columns_to_ignore_index = [df.get_column_index(c) for c in columns_to_ignore]
+    columns_to_nest_index = [df.columns.index(c) for c in columns_to_nest]
+    columns_to_ignore_index = [df.columns.index(c) for c in columns_to_ignore]
+
+    long_table = (
+        _get_table_for_column_nesting(
+            df,
+            sep=sep,
+            to_level=to_level,
+            ignore_pattern=ignore_pattern,
+            separator_in_name=separator_in_name,
+        )
+        # .pipe(debug, 'long_table')
+        .filter(pl.col("index").is_in(columns_to_nest_index))
+    )
+    wide_table = long_table.pivot(
+        index=["index", "columns"],
+        values="components_with_sep",
+        columns=["level", "is_separator"],
+    )  # .pipe(debug, "wide_table")
+    max_level = long_table["level"].max()
+    current_level = max_level
+    selectors = []
+
+    while current_level > to_level:
+        # print(f"Level: {current_level}")
+        group_columns = [cs.matches(r"^\{" + str(c)) for c in range(current_level)]
+        field_columns = [cs.matches(r"^\{" + str(current_level))]
+        # grop_separator = [cs.matches(r"^\{" + str(current_level) + ',true}$')] # Separator only for grouping
+        actual_group_columns = reduce(
+            add, [cs.expand_selector(wide_table, e) for e in group_columns]
+        )
+        # Include the separator in the grouping columns (only relevant for `separator_in_name='after'`)
+        group_separator = cs.expand_selector(
+            wide_table, cs.matches(r"^\{" + str(current_level) + ",true}$")
+        )
+        extra_group_columns = ["group_sep"] if len(group_separator) == 1 else []
+
+        agg = (
+            wide_table.with_columns(pl.col(group_separator).alias("group_sep"))
+            .group_by(group_columns + extra_group_columns, maintain_order=True)
+            .agg(
+                pl.col("columns").alias("old_columns"),
+                pl.concat_str(field_columns).alias("field_names"),
+                pl.col("index").min(),
+            )
+            .with_columns(
+                pl.concat_str(group_columns, ignore_nulls=True).alias("columns")
+            )
+            .with_columns(
+                (pl.col("field_names").list.len() <= 1).alias("singleton_struct")
+            )
+            # .pipe(debug, 'agg')
+        )
+
+        struct_expression_table = agg.select(
+            ["old_columns", "field_names", "columns", "singleton_struct", "index"]
+        )
+
+        selector = []
+        for (
+            old_columns,
+            field_names,
+            new_column,
+            is_singleton,
+            index,
+        ) in struct_expression_table.rows():
+            if is_singleton and (field_names[0] is None or not allow_singleton_nesting):
+                selector_col = (index, pl.col(old_columns))
+
+            else:
+                selector_col = (
+                    index,
+                    (
+                        pl.struct(old_columns)
+                        .struct.rename_fields(field_names)
+                        .alias(new_column)
+                    ),
+                )
+            selector.append(selector_col)
+        # add passthrough columns
+        selector.extend(
+            [
+                (index, cs.by_name(col_name))
+                for index, col_name in zip(columns_to_ignore_index, columns_to_ignore)
+            ]
+        )
+        # if
+        selectors.append([e[1] for e in sorted(selector)])
+
+        if not allow_singleton_nesting:
+            agg = agg.with_columns(
+                pl.when(pl.col("singleton_struct"))
+                .then(
+                    pl.concat_str(
+                        pl.col(actual_group_columns[-1]),
+                        pl.col("field_names").list.join(""),
+                    ),
+                )
+                .otherwise(pl.col(actual_group_columns[-1])),
+                pl.when(pl.col("singleton_struct"))
+                .then(
+                    pl.concat_str(
+                        pl.col("columns"), pl.col("field_names").list.join("")
+                    ),
+                )
+                .otherwise(pl.col("columns")),
+            )
+
+        wide_table = agg.select("index", "columns", *group_columns)
+        current_level -= 1
+    return selectors
+
+
+# TODO: to_level=1 leads to different results depending on the table i. e.
+# [idx.o, idx.c] -> [idx];
+# [idx.o, idx.c, bbx.x.lower, bbx.x.upper] -> [idx.o, idx.c, bbx.x]
+def nest(
+    df,
+    sep=".",
+    to_level=0,
+    column_selector=cs.all(),
+    # method=NestingStrategy.IGNORE_START,
+    ignore_pattern=r".*_[A-Z]",
+    separator_in_name="after",
+    allow_singleton_nesting=False,
+):
+    for ns in nest_selector(
+        df,
+        sep=sep,
+        to_level=to_level,
+        # method=method,
+        ignore_pattern=ignore_pattern,
+        separator_in_name=separator_in_name,
+        allow_singleton_nesting=allow_singleton_nesting,
+        column_selector=column_selector,
+    ):
+        df = df.select(ns)
+    return df
+
+
+def _nest_selector_old(
+    df: pl.DataFrame,
+    sep=".",
+    to_level=0,
+    method=NestingStrategy.SPLIT,
+    ignore_pattern=r".*_[A-Z]",
+    include_sep="after",
+) -> SelectorType:
+    # PATTERN_STRATEGY_NEW = fr"(?:{ignore_pattern}[^\n{re.escape(sep)}]+)?(?:[^\n{re.escape(sep)}]+)" # Ignore everything before _[A-Z] -> 'Pol-II-S2P.0_PrincipalAxis-a.x' split on '.' -> ['Pol-II-S2P.0_PrincipalAxis-a', 'x']
+    PATTERN_STRATEGY_NEW = (
+        rf"(?:{ignore_pattern})?([^\n{re.escape(sep)}]+)?([{re.escape(sep)}])?"
+    )
+
+    if to_level < 0:
+        raise ValueError("lowest nesting level must be 0 or larger!")
+
+    match method:
+        case NestingStrategy.SPLIT:
+            columns_selector = pl.col("columns").str.split(sep).alias("columns_split")
+
+        case NestingStrategy.IGNORE_START:
+            columns_selector = (
+                pl.col("columns")
+                .str.extract_all(PATTERN_STRATEGY_NEW)
+                .alias("columns_split")
+            )
+
+        case _:
+            raise ValueError(f"Unknown nesting strategy {method!r}")
+
+    long_table = (
+        pl.Series("columns", df.columns)
+        .to_frame()
+        .pipe(debug)
+        .with_columns(columns_selector)
+        # .with_columns(pl.col('columns').str.extract_all(pattern).alias('components'))
+        .pipe(debug)
+        .with_row_index()
+        .explode("columns_split")
+        .with_columns(pl.int_range(0, pl.len()).over("index").alias("level"))
+    )
+
+    wide_table = long_table.pivot(
+        index=["index", "columns"], values="columns_split", columns="level"
+    )
+
+    max_level = long_table["level"].max()
+    current_level = max_level
+    selectors = []
+    # loop until the appropriate level is reached
+    while current_level > to_level:
+        group_columns = list(map(str, range(current_level)))
+        aggregated = (
+            wide_table.group_by(group_columns, maintain_order=True)
+            .agg(
+                pl.col("columns").alias("old_columns"),
+                pl.col(str(current_level)).alias("field_names"),
+            )
+            .with_columns(
+                pl.concat_str(group_columns, ignore_nulls=True, separator=sep).alias(
+                    "columns"
+                )
+            )
+        )
+        # run struct construction for this round
+        structify_pass = aggregated.select(["old_columns", "field_names", "columns"])
+        selector = [
+            (
+                pl.struct(old_columns).struct.rename_fields(field_names).alias(columns)
+                if (len(old_columns) > 1)
+                else pl.col(old_columns)
+            )
+            for old_columns, field_names, columns in structify_pass.rows()
+        ]
+        selectors.append(selector)
+
+        # use the rest of the table for the next round
+        wide_table = aggregated.select("columns", *list(map(str, range(current_level))))
+        current_level -= 1
+    return selectors
+
+
+def dtype_depth(dtype):
+    if isinstance(dtype, pl.Field):
+        dtype = dtype.dtype
+
+    if dtype.is_nested():
+        if hasattr(dtype, "fields"):
+            return 1 + (max(map(dtype_depth, dtype.fields)) if dtype else 0)
+        # else:
+        #     warn(f'Non-struct nested dtypes like f{dtype} cannot be traversed.')
+    return 0
+
+
+def unnest(df, to_level=-1, sep="."):
+    max_depth = max(map(dtype_depth, df.dtypes))
+    if to_level < 0:
+        to_level = max_depth + to_level + 1
+    for _ in range(to_level):
+        df = df.pipe(unnest_all_structs, sep=sep)
+    return df
+
+
+def nest_struct_nth_pos(df, n=0, sep=".", from_last=False):
+    if not from_last:
+        select_nth = pl.col("parts").list.get(n).alias("inside")
+        select_pre = pl.col("parts").list.slice(0, n).alias("pre")
+        select_post = pl.col("parts").list.slice(n + 1).alias("post")
+        join_parts = (
+            pl.concat_list(select_pre, select_post).list.join(sep).alias("outside")
+        )
+    else:
+        select_nth = pl.col("parts").list.reverse().list.get(n).alias("inside")
+        select_pre = pl.col("parts").list.reverse().list.slice(0, n).alias("pre")
+        select_post = pl.col("parts").list.reverse().list.slice(n + 1).alias("post")
+        join_parts = (
+            pl.concat_list(select_pre, select_post)
+            .list.reverse()
+            .list.join(sep)
+            .alias("outside")
+        )
+
+    struct_columns = (
+        (
+            pl.Series("columns", df.columns)
+            .to_frame()
+            .with_columns(pl.col("columns").str.split(".").alias("parts"))
+        )
+        .select(
+            pl.col("columns"),
+            select_nth,
+            join_parts,
+        )
+        .with_columns(
+            pl.when(pl.col("outside") == "")
+            .then(pl.col("inside"))
+            .otherwise(pl.col("outside"))
+            .alias("outside")
+        )
+        .group_by("outside", maintain_order=True)
+        .agg(pl.all())
+        .select("outside", "columns", "inside")
+    )
+
+    command = []
+    for outside, columns, inside in struct_columns.select(
+        ["outside", "columns", "inside"]
+    ).rows():
+        if len(columns) <= 1:
+            command.append(pl.col(columns))
+        else:
+            command.append(
+                pl.struct(columns).struct.rename_fields(inside).alias(outside)
+            )
+
+    return df.select(command)
 
 
 def nest_structs(
@@ -319,9 +770,6 @@ def nest_structs(
             ],
         ],
     )
-
-
-# df_all.select(~cs.matches(f"^{pattern_before_sep}{sep}{pattern_after_sep}$"),)
 
 
 def set_index_dtypes(df: pl.DataFrame) -> pl.DataFrame:
@@ -380,7 +828,9 @@ def replace_channel_separators_in_columns(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def join(
-    dfs: Sequence[pl.DataFrame], on: str | Sequence[str], how: JoinStrategy = "outer"
+    dfs: Sequence[pl.DataFrame],
+    on: str | Sequence[str],
+    how: JoinStrategy = "outer_coalesce",
 ) -> pl.DataFrame:
     if len(dfs) == 0:
         return pl.DataFrame()
@@ -412,8 +862,6 @@ def split_and_melt_column_name(
         df, sep=sep, column_name=new_column_name, index=index, return_list=return_list
     )
 
-import re
-
 
 def split_and_melt_column_name_expr(
     column: str,
@@ -425,38 +873,42 @@ def split_and_melt_column_name_expr(
     drop_non_matching: bool = False,
 ) -> pl.Expr:
     if pattern_before is None:
-        pattern_before = f'(.*[^{sep}])?'
+        pattern_before = f"(.*[^{sep}])?"
     if pattern_after is None:
-        pattern_after = f'([^{sep}].*)?'
+        pattern_after = f"([^{sep}].*)?"
     pattern = re.compile(f"{pattern_before}{sep}{pattern_after}")
-    
+
     mo = pattern.match(column)
     if mo is None:
-            return pl.col(column)
-        
+        return pl.col(column)
+
     values_column, column_name = mo.groups()
     if not column_before_split:
         values_column, column_name = column_name, values_column
-        
-    return pl.struct(pl.lit(values_column).alias(new_column_name), pl.col(column).alias(column_name)).alias(column)
+
+    return pl.struct(
+        pl.lit(values_column).alias(new_column_name), pl.col(column).alias(column_name)
+    ).alias(column)
 
 
 def split_and_melt_column_names_on(
-    df: FrameOrLazy,
+    df: AnyFrameT,
     sep: str = "_",
     pattern_before: str | None = None,
     pattern_after: str | None = None,
     column_before_split: bool = False,
     new_column_name: str = "column",
-    index_columns: "str | Iterable[str] | SelectorType" = sel.index,
-) -> pl.LazyFrame:
+    index_columns: "str | Iterable[str] | SelectorType" = _sel.index
+    | cs.starts_with("idx.")
+    | cs.starts_with("fidx."),
+) -> AnyFrameT:
     # df = df.lazy()
     if pattern_before is None:
-        pattern_before = f'.*[^{sep}]'
+        pattern_before = f".*[^{sep}]"
     if pattern_after is None:
-        pattern_after = f'[^{sep}].*'
+        pattern_after = f"[^{sep}].*"
     pattern = f"^({pattern_before}){sep}({pattern_after})$"
-    
+
     split_columns = (
         (
             pl.Series("columns", cs.expand_selector(df, ~index_columns))
@@ -464,9 +916,7 @@ def split_and_melt_column_names_on(
             .with_columns(
                 [
                     pl.col("columns")
-                    .str.extract_groups(
-                        pattern
-                    )
+                    .str.extract_groups(pattern)
                     .alias("parts")
                     .struct.rename_fields(["before", "after"])
                 ]
@@ -481,14 +931,22 @@ def split_and_melt_column_names_on(
     )
     out_dfs = []
     for column_value, old_names, new_names in split_columns:
-        out_dfs.append(df.select(index_columns, pl.lit(column_value).alias(new_column_name), *[pl.col(o).alias(n) for o, n in zip(old_names, new_names)]))
+        out_dfs.append(
+            df.select(
+                index_columns,
+                pl.lit(column_value).alias(new_column_name),
+                *[pl.col(o).alias(n) for o, n in zip(old_names, new_names)],
+            )
+        )
     # return out_dfs
-    return pl.concat(out_dfs, how='diagonal')
+    if len(out_dfs) == 0:
+        return df
+    return pl.concat(out_dfs, how="diagonal")
 
-           
 
 def is_selector(s: Any) -> TypeGuard[SelectorType]:
     return cs.is_selector(s)
+
 
 def stack_column_name_to_column(
     df: pl.DataFrame,
@@ -540,11 +998,13 @@ def unstack_column_to_column_name(
             df.filter(pl.col(column_name) == channel_name).select(
                 [
                     *index,
-                    pl.exclude(list(index)).prefix(f"{channel_name}{sep}"),
+                    pl.exclude(list(index) + [column_name]).prefix(
+                        f"{channel_name}{sep}"
+                    ),
                 ]
             )
         )
-    return join(dfs, on=list(index))
+    return join(dfs, on=list(index), how="outer_coalesce")
 
 
 def split_column(
@@ -612,7 +1072,7 @@ def split_channel_pair_column(
                 .otherwise(pl.col("channel"))
                 .alias("channel_ref"),
             ]
-        ).pipe(split_channel_column)
+        ).pipe(split_channel_column, index=index)
     return df_split
 
 
@@ -639,7 +1099,7 @@ def pipe_df_nulls(df, **kwargs):
 
 def plot_null_columns(
     df: pl.DataFrame,
-    index: SelectorType = sel.index,
+    index: SelectorType = _sel.index | cs.starts_with("idx.") | cs.starts_with("fidx."),
     sort=True,
     drop_zero_columns=False,
     ax=None,
@@ -672,24 +1132,31 @@ def plot_df_nulls(
     df: pl.DataFrame,
     index: tuple[str, ...] = ("roi", "object", "label"),
     row_color_columns: tuple[str, ...] | None = None,
+    subsample_by: int | None = None,
+    title: str | None = None,
     **kwargs,
 ):
     df = df.fill_nan(None)
+    if subsample_by is not None:
+        df_samp = df.gather_every(subsample_by)
+    else:
+        df_samp = df
+
     # pdf_index = df.select(pl.col(e) for e in index).to_pandas()
     pdf_cats = (
         None
         if row_color_columns is None
-        else df.select(
+        else df_samp.select(
             pl.col(e).map(apply_colormap) for e in row_color_columns
         ).to_pandas()
     )
 
     feature_columns = sorted(
-        list(set(df.pipe(select_numeric_and_nested).columns).difference(index)),
-        key=df.columns.index,
+        list(set(df_samp.pipe(select_numeric_and_nested).columns).difference(index)),
+        key=df_samp.columns.index,
     )
     pdf_features_is_null = (
-        df.select(feature_columns).select(pl.all().is_null()).to_pandas()
+        df_samp.select(feature_columns).select(pl.all().is_null()).to_pandas()
     )
     nan_percentage = pdf_features_is_null.sum().sum() / pdf_features_is_null.size
 
@@ -731,7 +1198,9 @@ def plot_df_nulls(
     g.ax_heatmap.set_xticklabels(xticklabels, rotation=90)
     g.ax_heatmap.set_yticks([])
     g.ax_heatmap.set_xlabel(f"{pdf_features_is_null.shape[1]}")
-    g.ax_heatmap.set_ylabel(f"{pdf_features_is_null.shape[0]}")
+    g.ax_heatmap.set_ylabel(
+        f"{pdf_features_is_null.shape[0]:,}{f' out of {df.shape[0]:,}'}"
+    )
 
     return g
 

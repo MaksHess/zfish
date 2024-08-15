@@ -25,6 +25,7 @@ from zfish.features.queries import FeatureQuery
 from zfish.features.types import LabelImage, SpatialImage
 
 
+# TODO: Consistency of error cases between statistics
 def _pearsonr(x: Sequence[float], y: Sequence[float]) -> float:
     statistic, _ = pearsonr(x, y)
     return statistic
@@ -143,7 +144,11 @@ def get_colocalization_features(
             img2_slc = img2[slc]
             img1_px = img1_slc[np.where(lbls_slc == label)]
             img2_px = img2_slc[np.where(lbls_slc == label)]
-            corrs.append(func(img1_px, img2_px))
+            try:
+                res = func(img1_px, img2_px)
+            except ValueError as e:
+                res = np.nan
+            corrs.append(res)
         df = df.with_columns(pl.Series(metric, corrs))
 
     df = df.fill_nan(None)
@@ -292,4 +297,5 @@ def get_colocalization_features(
 #     )
 #     df.ww.set_index("label")
 
+#     return df
 #     return df

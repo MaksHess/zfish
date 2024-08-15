@@ -70,7 +70,7 @@ def _(
     scale: Sequence[float] | None = None,
     c_coords: Sequence[str] | None = None,
     t_coords: Sequence[TimeCoord] | None = None,
-    name: str | None = None,
+    name: str = 'image',
 ) -> SpatialImage:
     spatial_dims = tuple(e for e in dims if e in SPATIAL_DIMS)
     return to_spatial_image(

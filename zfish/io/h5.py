@@ -77,6 +77,7 @@ def select(
     f: h5py.File,
     attrs_select: dict[str, str | int | tuple[str | int, ...]] | None = None,
     not_attrs_select: dict[str, str | int | tuple[str | int, ...]] | None = None,
+    return_names: bool = False,
 ) -> list[h5py.Dataset]:
     dsets: list[h5py.Dataset] = []
     for dset in datasets(f):
@@ -98,7 +99,10 @@ def select(
                     uncheck.append(dset.attrs.get(b) == not_attrs_select[b])
 
         if all(check) and not any(uncheck):
-            dsets.append(dset)
+            if return_names:
+                dsets.append(dset.name)
+            else:
+                dsets.append(dset)
     return dsets
 
 

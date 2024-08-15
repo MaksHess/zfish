@@ -9,6 +9,8 @@
 *.clf
 *.h5
 *.json
+*.gif
+*.html
 data/
 
 # Byte-compiled / optimized / DLL files
@@ -21,6 +23,7 @@ __pycache__/
 
 # Distribution / packaging
 .Python
+db/
 env/
 build/
 develop-eggs/

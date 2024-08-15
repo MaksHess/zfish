@@ -32,6 +32,8 @@ COLOC_PATTERN = f"^({CHANNEL_PAIR_PATTERN}_)?{'{}'}$"
 
 DISTANCE_PATTERN = r"^(([a-zA-Z0-9-]+)\W(\d+)_)?{}{}(\W[xyz])?$"
 
+DISTANCE_PATTERN_NEW = r"^(([a-zA-Z0-9-]+)\W(\d+)_)?{}_{}(\W[xyz])?$"
+
 LABEL = reduce(or_, [cs.matches(LABEL_PATTERN.format(f)) for f in LabelFeature])
 INTENSITY = reduce(
     or_, [cs.matches(INTENSITY_PATTERN.format(f)) for f in IntensityFeature]
@@ -44,6 +46,13 @@ DISTANCE = reduce(
     [
         cs.matches(DISTANCE_PATTERN.format(f, t))
         for f, t in product(DistanceFeature, DistanceFunction)
+    ],
+)
+DISTANCE_NEW = reduce(
+    or_,
+    [
+        cs.matches(DISTANCE_PATTERN_NEW.format(f, t))
+        for f, t in product(DistanceFunction, DistanceFeature)
     ],
 )
 DENSITY = (

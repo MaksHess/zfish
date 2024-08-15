@@ -1,4 +1,5 @@
 # %%
+import warnings
 from itertools import cycle
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -11,6 +12,7 @@ if TYPE_CHECKING:
     import pandas as pd
     import polars as pl
 
+    from zfish.features.types import LabelImage
     from zfish.roi.spatial_roi import Roi, RoiMap
 
 NAPARI_COMMON_DEFAULTS = {
@@ -85,6 +87,20 @@ def imshow_roi(
         viewer = _show_label(roi.labels, tables=roi.tables, viewer=viewer, name_prefix=name_prefix, **label_kwargs)
     return viewer
 
+def imshow_si(
+    img: "SpatialImage",
+    is_label: bool = False,
+    viewer: napari.Viewer | None = None,
+    tables: "dict[str, pl.DataFrame] | None" = None,
+    name_prefix: str = '',
+    **kwargs,
+) -> napari.Viewer:
+    
+    if "l" in img.coords.keys() or is_label or img.name == 'label':
+        return _show_label(img, viewer=viewer, name_prefix=name_prefix, tables=tables, **kwargs)
+    if tables is not None:
+        warnings.warn("no features can be added to images, only labels.")
+    return _show_image(img, viewer=viewer, name_prefix=name_prefix, **kwargs)
 
 def _show_image(
     images: SpatialImage, 
@@ -94,8 +110,8 @@ def _show_image(
 ) -> napari.Viewer:
     if viewer is None:
         viewer = napari.Viewer()
-    if images.c.shape == tuple():
-        images = images.expand_dims("c")
+    if not "c" in images.dims:
+        images = images.expand_dims('c')
     if "c" in images.dims:
         for ch in images.c:
             channel = images.sel(c=ch.item())
@@ -114,7 +130,7 @@ def _show_image(
 
 
 def _show_label(
-    labels: SpatialImage,
+    labels: "LabelImage",
     viewer: napari.Viewer | None = None,
     tables: dict[str, "pl.DataFrame"] | None = None,
     name_prefix: str = '',
@@ -122,15 +138,20 @@ def _show_label(
 ) -> napari.Viewer:
     if viewer is None:
         viewer = napari.Viewer()
-    if labels.l.shape == tuple():
-        labels = labels.expand_dims("l")
-    if "l" in labels.dims:
-        for ch in labels.l:
-            channel = labels.sel(l=ch)
-            kwargs["name"] = f"{name_prefix}{ch.item()}"
-            kwargs["scale"] = channel.meta.scale
-            kwargs["translate"] = channel.meta.translate
-            if tables is not None and ch.item() in tables:
-                kwargs["features"] = tables[ch.item()].pipe(unnest_all_structs).clone().to_pandas()
-            viewer.add_labels(channel, **kwargs)
+        
+    if "c" in tuple(labels.coords.keys()):
+        label_dim = "c"
+    else:
+        label_dim = "l"
+    if label_dim not in labels.dims:
+        labels = labels.expand_dims(label_dim)
+
+    for lb in labels[label_dim]:
+        lbl_img = labels.sel({label_dim: lb.item()})
+        kwargs["name"] = f"{name_prefix}{lb.item()}"
+        kwargs["scale"] = lbl_img.meta.scale
+        kwargs["translate"] = lbl_img.meta.translate
+        if tables is not None and lb.item() in tables:
+            kwargs["features"] = tables[lb.item()].pipe(unnest_all_structs).clone().to_pandas()
+        viewer.add_labels(lbl_img, **kwargs)
     return viewer

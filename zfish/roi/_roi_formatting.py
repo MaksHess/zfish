@@ -71,6 +71,8 @@ def replace_too_long_elements(seq: Sequence[str], col_width: int | None = None):
     else:
         return [e if len(e) <= col_width else f"{e[:(col_width-1)]}." for e in seq]
 
+def replace_too_long_element(e: str, col_width: int):
+    return e if len(e) <= col_width else f"{e[:(col_width-1)]}."
 
 def sequence_to_columns(seq: Sequence[Any], n: int = 3):
     return [list(islice(seq, i, None, n)) for i in range(n)]

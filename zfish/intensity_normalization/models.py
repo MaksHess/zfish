@@ -5,8 +5,9 @@ import pickle
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
+from itertools import zip_longest
 from pathlib import Path
-from typing import Any, Callable, Sequence, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence, TypeAlias, TypedDict
 
 import dask
 import dask.array as da
@@ -19,6 +20,9 @@ from scipy.optimize import curve_fit
 from typing_extensions import Self, Unpack
 
 from zfish.features.types import SpatialImage
+
+if TYPE_CHECKING:
+    from zfish.image.pyramid import RasterMeta
 
 Parameters: TypeAlias = tuple[float, ...]
 ModelCallable: TypeAlias = Callable[[NDArray[Any], Unpack[Parameters]], NDArray[Any]]
@@ -496,46 +500,65 @@ def lazy_apply_model_to_channel(
         raise ValueError(f"Unkown model feature names: {model._feature_names=}")
 
 
-# class NoiseModel(ABC):
-#     @abstractmethod
-#     def transform(self, X: NDArray[Any]) -> NDArray[Any]:
-#         pass
+def lazy_apply_model_to_channel_dask(
+    model: Model,
+    channel_da: da.Array,
+    channel_meta: "RasterMeta",
+    label_da: da.Array | None = None,
+    correction_factor_clip_range: tuple[float, float] | None = (0.0, 50.0),
+    model_dim: Literal["z", "y", "x"] = "z",
+) -> "tuple[da.array, RasterMeta]":
+    if channel_da.ndim != 3 or tuple(channel_meta.dims) != ("z", "y", "x"):
+        raise TypeError(
+            f"Only 3D images allowed, got: {dict(zip_longest(channel_meta.dims, channel_da.shape))}"
+        )
 
+    if model._feature_names == ["Centroid-z"]:
+        z_coord = (
+            (np.arange(channel_da.shape[0]) * channel_meta.scale[0])
+            + channel_meta.origin[0]
+        ).reshape(-1, 1)
+        correction_factors = (
+            model._correction_factor(z_coord).astype(np.float32).reshape(-1, 1, 1)
+        )
+        if correction_factor_clip_range is not None:
+            lb, ub = correction_factor_clip_range
+            correction_factors[
+                np.logical_or(correction_factors < lb, correction_factors > ub)
+            ] = ub
+        channel_meta = channel_meta.from_template(path=None)
+        return channel_da * correction_factors, channel_meta
 
-# class NoNoise(NoiseModel):
-#     def transform(self, X: NDArray[Any]) -> NDArray[Any]:
-#         return X
+    elif model._feature_names == ["MediumPath", "EmbryoPath"]:
+        if label_da is None:
+            raise ValueError(
+                "Provide embryo segmentation `lbl_da` for 2-step correction."
+            )
+        if not all(
+            s_channel == s_label
+            for s_channel, s_label in zip(channel_da.shape, label_da.shape)
+        ):
+            raise ValueError(
+                f"Shapes not matching: {channel_da.shape=} != {label_da.shape=}"
+            )
+        embryo_path_da = (label_da).cumsum(
+            axis=0, dtype=np.float32
+        ) * channel_meta.scale[0]
+        medium_path_da = (~label_da.astype(bool)).cumsum(
+            axis=0, dtype=np.float32
+        ) * channel_meta.scale[0]
 
+        with dask.config.set(**{"array.slicing.split_large_chunks": False}):
+            X = np.stack([medium_path_da.flatten(), embryo_path_da.flatten()]).T
+            # X = np.concatenate([medium_path_si, embryo_path_si]).reshape(2, -1).T
+            correction_factors = model._correction_factor(X).T.reshape(channel_da.shape)
+            if correction_factor_clip_range is not None:
+                lb, ub = correction_factor_clip_range
+                correction_factors[
+                    np.logical_or(correction_factors < lb, correction_factors > ub)
+                ] = ub
+        channel_meta = channel_meta.from_template(path=None)
+        return (channel_da * correction_factors), channel_meta
 
-# @dataclass
-# class GaussianNoise(NoiseModel):
-#     apply: Callable
-#     sigma: float = 1
-
-#     def transform(self, X: NDArray[Any]) -> NDArray[Any]:
-#         noise = np.random.randn(X.shape) * self.sigma
-#         return self.apply(X, noise)
-
-
-# @dataclass
-# class AdditiveGaussianNoise(GaussianNoise):
-#     apply: Callable = np.add
-
-
-# @dataclass
-# class MultiplicativeGaussianNoise(GaussianNoise):
-#     apply: Callable = np.multiply
-
-
-# @dataclass
-# class DataGenerator:
-#     model: Model
-#     noise_model: NoiseModel
-# %%
-
-# %%
-if __name__ == "__main__":
-    # %%
-
-    mdl = Linear()
-    out_file = mdl.save(file_name="test")
+    else:
+        raise ValueError(f"Unkown model feature names: {model._feature_names=}")

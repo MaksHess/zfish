@@ -28,7 +28,7 @@ class CorrelationFeatureExtractionParams(BaseModel):
 SLURM_COMMAND = """#!/usr/bin/env bash
 
 #SBATCH --array=0-{0}%200
-#SBATCH --mem-per-cpu=20000m
+#SBATCH --mem-per-cpu=15000m
 #SBATCH --cpus-per-task=4
 #SBATCH --error=./logs/slurm-%A_%a.err
 #SBATCH --output=./logs/slurm-%A_%a.out

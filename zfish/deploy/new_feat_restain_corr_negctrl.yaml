@@ -1,0 +1,45 @@
+resource_path: "/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/multi_tables"
+output_path: "/data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/multi_tables/restain_corr_negctrl"
+channel_pairs:
+- - DAPI.0
+  - bCatenin.1
+- - Pol-II-S2P.0
+  - bCatenin.1
+- - FLAG.0
+  - bCatenin.1
+- - PCNA.0
+  - bCatenin.1
+- - H3K27Ac.1
+  - bCatenin.1
+- - pH3.1
+  - bCatenin.1
+- - H2B.2
+  - bCatenin.1
+- - ALYREF.2
+  - bCatenin.1
+- - Pol-II-S5P.2
+  - bCatenin.1
+features:
+- PearsonR
+- SpearmanR
+- KendallTau
+levels:
+- 0
+- 1
+- 2
+object_types:
+- nucleiRaw3
+- cells
+- cyto
+parallelize_over:
+- idx.m
+- idx.roi
+- idx.o
+process_queries: any_valid
+rois: null
+t_model: null
+wells:
+- B06
+- E06
+- G05
+z_model: null

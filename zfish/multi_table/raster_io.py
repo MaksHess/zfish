@@ -1,3 +1,4 @@
+# %%
 from dataclasses import astuple, dataclass
 from enum import Enum
 from typing import Hashable, Literal, Protocol, TypeAlias, runtime_checkable
@@ -222,6 +223,32 @@ def _meta_from_dset(dset: h5py.Dataset):
     )
 
 
+def _safe_to_lazy_dask_image(
+    img_or_query: LazyRasterQueryDask | DaskImage | NumpyImage,
+) -> DaskImage:
+    if isinstance(img_or_query, LazyRasterQueryDask):
+        return img_or_query.lazy()
+    elif isinstance(img_or_query, tuple) and isinstance(img_or_query[0], da.Array):
+        return img_or_query
+    elif isinstance(img_or_query, tuple):
+        return da.array(img_or_query[0]), img_or_query[1]
+    else:
+        raise TypeError(f"Cannot handle {type(img_or_query)}")
+
+
+def _safe_to_numpy_image(
+    img_or_query: LazyRasterQueryDask | DaskImage | NumpyImage,
+) -> DaskImage:
+    if isinstance(img_or_query, LazyRasterQueryDask):
+        return img_or_query.compute()
+    elif isinstance(img_or_query, tuple) and isinstance(img_or_query[0], da.Array):
+        return img_or_query[0].compute(), img_or_query[1]
+    elif isinstance(img_or_query, tuple):
+        return img_or_query
+    else:
+        raise TypeError(f"Cannot handle {type(img_or_query)}")
+
+
 @dataclass
 class LabelImageQueryDask(LazyRasterQueryDask):
     root_path: str
@@ -275,12 +302,12 @@ class LabelImageQueryDask(LazyRasterQueryDask):
 
 @dataclass
 class BinaryMaskQueryDask(LazyRasterQueryDask):
-    label_image_query: LabelImageQueryDask
+    label_image_query: LabelImageQueryDask | DaskImage | NumpyImage
     resample_target_size: tuple[int, ...] | None = None
     upcast: bool = True
 
     def lazy(self) -> tuple[da.array, RasterMeta]:
-        da_array, meta = self.label_image_query.lazy()
+        da_array, meta = _safe_to_lazy_dask_image(self.label_image_query)
         da_array = da_array > 0
         meta = meta.from_template(type_="mask")
         if self.upcast:
@@ -305,12 +332,12 @@ class BinaryMaskQueryDask(LazyRasterQueryDask):
 
 @dataclass
 class FuzzyMaskQueryDask(LazyRasterQueryDask):
-    binary_mask_query: BinaryMaskQueryDask
+    binary_mask_query: BinaryMaskQueryDask | DaskImage | NumpyImage
     gaussian_blur_sigma: int = 1
     order: int = 0
 
     def lazy(self) -> tuple[da.array, RasterMeta]:
-        binary_mask, meta = self.binary_mask_query.lazy()
+        binary_mask, meta = _safe_to_lazy_dask_image(self.binary_mask_query)
         fuzzy_mask = binary_mask.astype(np.float32)
         fuzzy_mask = gaussian(image=fuzzy_mask, sigma=self.gaussian_blur_sigma)
         meta = meta.from_template(type_="fuzzy_mask")
@@ -332,9 +359,11 @@ class ImageQueryDask(LazyRasterQueryDask):
     root_path: str
     channel_path: str
     z_model_path: str | None = None
-    z_model_label_image_query: LabelImageQueryDask | None = None
+    z_model_label_image_query: LabelImageQueryDask | DaskImage | NumpyImage | None = (
+        None
+    )
     t_model_correction_factor: float | None = None
-    mask_query: BinaryMaskQueryDask | None = None
+    mask_query: BinaryMaskQueryDask | DaskImage | NumpyImage | None = None
     cast_to_original_datatype: bool = True
     chunks: int | tuple[int, ...] | str = "auto"
 
@@ -349,7 +378,9 @@ class ImageQueryDask(LazyRasterQueryDask):
             z_model = Model.load(self.z_model_path)
 
         if self.z_model_path is not None and self.z_model_label_image_query is not None:
-            z_model_lbl_da, z_model_lbl_meta = self.z_model_label_image_query.lazy()
+            z_model_lbl_da, z_model_lbl_meta = _safe_to_lazy_dask_image(
+                self.z_model_label_image_query
+            )
             z_model_lbl_da, z_model_lbl_meta = lazy_resample_dask_label(
                 z_model_lbl_da,
                 z_model_lbl_meta,
@@ -369,7 +400,7 @@ class ImageQueryDask(LazyRasterQueryDask):
             # print(f"{channel_si=}")
 
         if self.mask_query is not None:
-            mask_da, mask_meta = self.mask_query.lazy()
+            mask_da, mask_meta = _safe_to_lazy_dask_image(self.mask_query)
             mask_da, mask_meta = lazy_resample_dask_label(
                 mask_da,
                 mask_meta,
@@ -390,10 +421,12 @@ class ImageQueryDask(LazyRasterQueryDask):
 
 @dataclass
 class MultiChannelQueryDask(LazyRasterQueryDask):
-    image_queries: tuple[ImageQueryDask, ...]
+    image_queries: tuple[ImageQueryDask | DaskImage | NumpyImage, ...]
 
     def lazy(self) -> tuple[da.Array, RasterMeta]:
-        imgs_with_metas = [img_q.lazy() for img_q in self.image_queries]
+        imgs_with_metas = [
+            _safe_to_lazy_dask_image(img_q) for img_q in self.image_queries
+        ]
         channels = da.stack([img_meta[0] for img_meta in imgs_with_metas])
         sample_meta = imgs_with_metas[0][1]
         channels_meta = sample_meta.from_template(
@@ -427,6 +460,7 @@ def _apply_bbx(img: Image, bbx: BoundingBox) -> Image:
 
 
 # FIXME: NOT FINISHED BELOW THIS LINE, INCLUDING COMMENTED OUT PART!!!
+# FIXME: CONTINUE HERE!!!
 @dataclass
 class LabelObjectQueryDask(LazyRasterQueryDask):
     object_id: Hashable
@@ -438,11 +472,8 @@ class LabelObjectQueryDask(LazyRasterQueryDask):
     channel_to_label_image: dict[str, DaskImage | NumpyImage] | None = None
     fuzzy_mask_sigma: int | None = None
 
-    def lazy(self) -> DaskImage:
-        if isinstance(self.multi_channel_query, LazyRasterQueryDask):
-            channels_arr, channels_meta = self.multi_channel_query.lazy()
-        else:
-            channels_arr, channels_meta = self.multi_channel_query
+    def _process(self, to_image_fn) -> Image:
+        channels_arr, channels_meta = to_image_fn(self.multi_channel_query)
 
         channels_slice_arr, channels_slice_meta = _apply_bbx(
             (channels_arr, channels_meta), self.bbx
@@ -460,7 +491,6 @@ class LabelObjectQueryDask(LazyRasterQueryDask):
                 label_image_arr,
                 label_image_meta,
             ) in channel_to_label_image_slice.items():
-                print(name)
                 if self.channel_to_label is None:
                     mask_arr = label_image_arr > 0
                 else:
@@ -480,441 +510,398 @@ class LabelObjectQueryDask(LazyRasterQueryDask):
                     ch * channel_to_mask_slice.get(ch_name, 1)
                     for ch, ch_name in zip(channels_slice_arr, channels_slice_meta.name)
                 )
-            )
+            ), channels_slice_meta
+
+    def lazy(self) -> DaskImage:
+        return self._process(_safe_to_lazy_dask_image)
 
     def compute(self) -> NumpyImage:
-        arr, meta = self.lazy()
-        return arr.compute(), meta
+        return self._process(_safe_to_numpy_image)
 
 
-# def _aggregate_image_paths(
-#     r,
-#     channels: list[str] | None = None,
-#     multiscale_level: int | None = 0,
-#     channel_masks: list[str | None] | None = None,
-#     z_model: str | None = None,
-#     t_model: str | None = None,
-# ):
-#     if channels is None:
-#         channels = r.channels["idx.c"]
-#     if multiscale_level is None:
-#         multiscale_levels = r.multiscale_levels["idx.m"]
-#     else:
-#         multiscale_levels = [multiscale_level]
+def _aggregate_image_paths(
+    r,
+    channels: list[str] | None = None,
+    multiscale_level: int | None = 0,
+    channel_masks: list[str | None] | None = None,
+    z_model: str | None = None,
+    t_model: str | None = None,
+):
+    if channels is None:
+        channels = r.channels["idx.c"]
+    if multiscale_level is None:
+        multiscale_levels = r.multiscale_levels["idx.m"]
+    else:
+        multiscale_levels = [multiscale_level]
 
-#     df_paths = (
-#         (
-#             r.images.filter(pl.col("idx.c").is_in(channels))
-#             .filter(pl.col("idx.m").is_in(multiscale_levels))
-#             .join(r.rois, on="idx.roi")
-#         )
-#         .with_columns(
-#             pl.col("idx.c")
-#             .cast(pl.String)
-#             .replace(dict(zip(channels, range(len(channels)))))
-#             .cast(pl.UInt16)
-#             .alias("channel_order")
-#         )
-#         .sort(["idx.roi", "channel_order"])
-#     )
-#     if channel_masks is None:
-#         channel_masks = [None for _ in range(len(channels))]
-#     else:
-#         if len(channel_masks) != len(channels):
-#             raise ValueError(
-#                 f"If `channel_masks` are provided, they need to be the same number as channels: {len(channels)=} {len(channel_masks)=}"
-#             )
-#     df_paths = (
-#         df_paths.with_columns(
-#             pl.col("idx.c")
-#             .replace(dict(zip(channels, channel_masks)))
-#             .cast(pl.Categorical)
-#             .alias("idx.o")
-#         )
-#         .join(
-#             r.label_images,
-#             on=["idx.roi", "idx.o"],
-#             suffix=".mask",
-#             how="left",
-#         )
-#         .join(
-#             r.z_models.with_columns(pl.col("idx.c").cast(pl.Categorical)).filter(
-#                 pl.col("fidx.z_model").is_null()
-#                 if z_model is None
-#                 else pl.col("fidx.z_model") == z_model
-#             ),
-#             on="idx.c",
-#             how="left",
-#         )
-#         .join(
-#             r.label_images.with_columns(pl.col("idx.o").cast(pl.String)),
-#             left_on=["idx.roi", "z_model.o.mask"],
-#             right_on=["idx.roi", "idx.o"],
-#             suffix=".z_model",
-#             how="left",
-#         )
-#         .join(
-#             r.t_models.filter(
-#                 pl.col("fidx.t_model").is_null()
-#                 if t_model is None
-#                 else pl.col("fidx.t_model") == t_model
-#             ).select(
-#                 pl.col("idx.c"),
-#                 pl.col("idx.roi"),
-#                 pl.col("fidx.t_model"),
-#                 pl.col("correction_factor").name.prefix("t_model."),
-#             ),
-#             on=["idx.c", "idx.roi"],
-#             how="left",
-#         )
-#     ).with_columns(pl.col("path.z_model").str.replace("\.json", ".pkl"))
+    df_imgs = (
+        (
+            r.images.filter(pl.col("idx.c").is_in(channels))
+            .filter(pl.col("idx.m").is_in(multiscale_levels))
+            .join(r.rois, on="idx.roi")
+        )
+        .with_columns(
+            pl.col("idx.c")
+            .cast(pl.String)
+            .replace(dict(zip(channels, range(len(channels)))))
+            .cast(pl.UInt16)
+            .alias("channel_order")
+        )
+        .sort(["idx.roi", "channel_order"])
+    )
+    if channel_masks is None:
+        channel_masks = [None for _ in range(len(channels))]
+    else:
+        if len(channel_masks) != len(channels):
+            raise ValueError(
+                f"If `channel_masks` are provided, they need to be the same number as channels: {len(channels)=} {len(channel_masks)=}"
+            )
 
-#     return df_paths
+    df_paths = (
+        df_imgs.with_columns(
+            pl.col("idx.c")
+            .replace(dict(zip(channels, channel_masks)))
+            .cast(pl.Categorical)
+            .alias("mask.o")
+        )
+        # .join(
+        #     r.label_images,
+        #     on=["idx.roi", "idx.o"],
+        #     suffix=".mask",
+        #     how="left",
+        # )
+        .join(
+            r.label_images.select(
+                pl.col("idx.m"),
+                pl.col("idx.roi"),
+                pl.col("idx.o"),
+                pl.col("o.path").alias("mask.o.path"),
+                pl.col("resample_scale_factors").alias("mask.resample_scale_factors"),
+            ),
+            left_on=["idx.m", "idx.roi", "mask.o"],
+            right_on=["idx.m", "idx.roi", "idx.o"],
+            how="left",
+        )
+        .join(
+            r.z_models.with_columns(pl.col("idx.c").cast(pl.Categorical)).filter(
+                pl.col("idx.z_model").is_null()
+                if z_model is None
+                else pl.col("idx.z_model") == z_model
+            ),
+            on="idx.c",
+            how="left",
+        )
+        .join(
+            # r.label_images.with_columns(pl.col("idx.o").cast(pl.String)),
+            r.label_images.select(
+                pl.col("idx.m"),
+                pl.col("idx.roi"),
+                pl.col("idx.o"),
+                pl.col("o.path").alias("z_model.o.path"),
+                pl.col("resample_scale_factors").alias(
+                    "z_model.resample_scale_factors"
+                ),
+            ),
+            left_on=["idx.m", "idx.roi", "z_model.o"],
+            right_on=["idx.m", "idx.roi", "idx.o"],
+            how="left",
+        )
+        .join(
+            r.t_models.filter(
+                pl.col("idx.t_model").is_null()
+                if t_model is None
+                else pl.col("idx.t_model") == t_model
+            ).select(
+                pl.col("idx.c"),
+                pl.col("idx.roi"),
+                pl.col("idx.t_model"),
+                pl.col("t_model.correction_factor"),
+            ),
+            on=["idx.c", "idx.roi"],
+            how="left",
+        )
+    ).with_columns(pl.col("z_model.path").str.replace("\.json", ".pkl"))
 
-
-# def _images_to_queries(
-#     df_imgs: pl.DataFrame,
-#     group=("idx.roi",),
-#     paths=(
-#         "path.root",
-#         "path.h5.image",
-#         "path.h5.label_image",
-#         "path.z_model",
-#         "path.h5.label_image.z_model",
-#         "t_model.correction_factor",
-#     ),
-#     dask_chunk_size="auto",
-#     separator="__",
-# ) -> dict[str, MultiChannelQueryDask]:
-#     queries = {}
-#     for name, df in df_imgs.group_by(group, maintain_order=True):
-#         image_queries = []
-#         for (
-#             path_root,
-#             channel_path,
-#             mask_object_type_path,
-#             z_model_path,
-#             z_model_object_type_path,
-#             t_model_correction_factor,
-#         ) in df.select(paths).rows():
-#             # path_root = "\\".join(
-#             #     r"C:\Users\hessm\Documents\zfish_local\imgs".split("\\")
-#             #     + path_root.split("\\")[-1:]
-#             # )
-#             if z_model_object_type_path is not None:
-#                 z_model_labels_q = LabelImageQueryDask(
-#                     path_root, z_model_object_type_path, chunks=dask_chunk_size
-#                 )
-#             else:
-#                 z_model_labels_q = None
-
-#             if mask_object_type_path is not None:
-#                 mask_labels_q = LabelImageQueryDask(
-#                     path_root, mask_object_type_path, chunks=dask_chunk_size
-#                 )
-#                 mask_q = BinaryMaskQueryDask(mask_labels_q)
-#             else:
-#                 mask_q = None
-#             image_queries.append(
-#                 ImageQueryDask(
-#                     path_root,
-#                     channel_path,
-#                     z_model_path=z_model_path,
-#                     z_model_label_image_query=z_model_labels_q,
-#                     t_model_correction_factor=t_model_correction_factor,
-#                     mask_query=mask_q,
-#                     chunks=dask_chunk_size,
-#                 )
-#             )
-#         if separator is not None:
-#             name = separator.join(map(str, name))
-#         queries[name] = MultiChannelQueryDask(tuple(image_queries))
-#     return queries
+    return df_paths
 
 
-# def _query_to_lazy(query):
-#     return query.lazy()
+def _images_to_queries(
+    df_imgs: pl.DataFrame,
+    group=("idx.roi",),
+    paths=(
+        "roi.path",
+        "c.path",
+        "mask.o.path",
+        "mask.resample_scale_factors",
+        "z_model.path",
+        "z_model.o.path",
+        "z_model.resample_scale_factors",
+        "t_model.correction_factor",
+    ),
+    dask_chunk_size="auto",
+    separator="__",
+) -> dict[str, MultiChannelQueryDask]:
+    queries = {}
+    for name, df in df_imgs.group_by(group, maintain_order=True):
+        image_queries = []
+        for (
+            path_root,
+            channel_path,
+            mask_object_type_path,
+            mask_object_type_resample_scale_factors,
+            z_model_path,
+            z_model_object_type_path,
+            z_model_object_type_resample_scale_factors,
+            t_model_correction_factor,
+        ) in df.select(paths).rows():
+            # path_root = "\\".join(
+            #     r"C:\Users\hessm\Documents\zfish_local\imgs".split("\\")
+            #     + path_root.split("\\")[-1:]
+            # )
+            if z_model_object_type_path is not None:
+                z_model_labels_q = LabelImageQueryDask(
+                    path_root,
+                    z_model_object_type_path,
+                    chunks=dask_chunk_size,
+                    resample_scale_factors=z_model_object_type_resample_scale_factors,
+                )
+            else:
+                z_model_labels_q = None
+
+            if mask_object_type_path is not None:
+                mask_labels_q = LabelImageQueryDask(
+                    path_root,
+                    mask_object_type_path,
+                    chunks=dask_chunk_size,
+                    resample_scale_factors=mask_object_type_resample_scale_factors,
+                )
+                mask_q = BinaryMaskQueryDask(mask_labels_q)
+            else:
+                mask_q = None
+            image_queries.append(
+                ImageQueryDask(
+                    path_root,
+                    channel_path,
+                    z_model_path=z_model_path,
+                    z_model_label_image_query=z_model_labels_q,
+                    t_model_correction_factor=t_model_correction_factor,
+                    mask_query=mask_q,
+                    chunks=dask_chunk_size,
+                )
+            )
+        if separator is not None:
+            name = separator.join(map(str, name))
+        queries[name] = MultiChannelQueryDask(tuple(image_queries))
+    return queries
 
 
-# def _queries_to_lazy_images(
-#     queries: dict[str, LazyRasterQueryDask], drop_meta: bool = False
-# ):
-#     lazy_images = {}
-#     for name, query in tqdm(queries.items()):
-#         lazy_image = query.lazy()
-#         if isinstance(lazy_image, tuple) and drop_meta:
-#             lazy_image = lazy_image[0]
-#         lazy_images[name] = lazy_image
-#     return lazy_images
+def _aggregate_label_image_paths(
+    r,
+    object_types: list[str] | None = None,
+    multiscale_level: int | None = 0,
+):
+    if object_types is None:
+        object_types = r.object_types["idx.o"]
+    if multiscale_level is None:
+        multiscale_levels = r.multiscale_levels["idx.m"]
+    else:
+        multiscale_levels = [multiscale_level]
+
+    df_label_images = (
+        r.label_images.filter(pl.col("idx.o").is_in(object_types))
+        .filter(pl.col("idx.m").is_in(multiscale_levels))
+        .join(r.rois, on="idx.roi")
+    )
+    return df_label_images
 
 
-# def _queries_to_lazy_bag(queries, npartitions=10):
-#     import dask.bag as db
-
-#     bag = db.from_sequence(queries, npartitions=npartitions)
-#     return bag.map(_query_to_lazy)
-
-
-# def _aggregate_label_object_paths(
-#     r,
-#     bbx_object_type: str,
-#     channels: list[str],
-#     channel_masks: list[str | None] | None = None,
-#     isolate_label: list[bool] | bool = True,
-#     multiscale_level: int = 0,
-#     z_model: str | None = None,
-#     t_model: str | None = None,
-# ):
-#     if channel_masks is not None:
-#         if len(channels) != len(channel_masks):
-#             raise ValueError(
-#                 f"If channel_masks provided they need to be the same number as channels: {len(channels)=} != {len(channel_masks)=}"
-#             )
-#         if isinstance(isolate_label, bool):
-#             isolate_label = [isolate_label] * len(channel_masks)
-
-#         isolate_label_channels = [
-#             ch for ch, isolate in zip(channels, isolate_label) if isolate
-#         ]
-
-#     df_imgs = (
-#         _aggregate_image_paths(
-#             r,
-#             channels,
-#             multiscale_level=multiscale_level,
-#             channel_masks=channel_masks,
-#             z_model=z_model,
-#             t_model=t_model,
-#         )
-#         .with_columns(
-#             pl.col("path.h5.label_image").alias("path.h5.label_image.bbx_mask"),
-#         )
-#         .with_columns(pl.lit(None).cast(pl.String).alias("path.h5.label_image"))
-#         .with_columns(
-#             pl.col("idx.c")
-#             .is_in(isolate_label_channels)
-#             .alias("bbx_mask.isolate_label")
-#         )
-#     )
-
-#     df_label_objects = r.label_objects.filter(pl.col("idx.o") == bbx_object_type)
-#     df_label_objects = label_objects_scale_bbx(
-#         r.multiscale_levels, df_label_objects, to_level=multiscale_level
-#     )
-#     return df_imgs, df_label_objects
+def _label_images_to_queries(
+    df_label_imgs: pl.DataFrame,
+    group=("idx.roi", "idx.o"),
+    paths=(
+        "roi.path",
+        "o.path",
+        "resample_scale_factors",
+    ),
+    dask_chunk_size="auto",
+    separator="__",
+) -> dict[str, LabelImageQueryDask]:
+    queries = {}
+    for name, df in df_label_imgs.group_by(group, maintain_order=True):
+        if separator is not None:
+            name = separator.join(map(str, name))
+        for (
+            path_root,
+            object_type_path,
+            resample_scale_factors,
+        ) in df.select(paths).rows():
+            queries[name] = LabelImageQueryDask(
+                path_root,
+                object_type_path=object_type_path,
+                resample_scale_factors=resample_scale_factors,
+                chunks=dask_chunk_size,
+            )
+    return queries
 
 
-# # FIXME: with above
-# def _label_objects_to_queries(
-#     df_label_objects: pl.DataFrame,
-#     df_imgs: pl.DataFrame,
-#     roi_id_columns: tuple[str, ...] = ("idx.roi", "idx.m"),
-#     object_id_columns: tuple[str, ...] = ("idx.o", "idx.label"),
-#     bbx_columns: tuple[str, ...] = (
-#         "bbx.z.lower",
-#         "bbx.z.upper",
-#         "bbx.y.lower",
-#         "bbx.y.upper",
-#         "bbx.x.lower",
-#         "bbx.x.upper",
-#     ),
-#     separator: str = "__",
-#     strategy: Literal["query", "dask_lazy", "dask_memory"] = "dask_lazy",
-#     fuzzy_mask_sigma: int | None = None,
-# ):
-#     label_object_queries = []
-
-#     for roi_id_parts, df_imgs_roi in df_imgs.group_by(
-#         roi_id_columns, maintain_order=True
-#     ):
-#         roi_id = separator.join(str(e) for e in roi_id_parts)
-
-#         channels_q = _images_to_queries(
-#             df_imgs_roi.with_columns(pl.lit(None).alias("path.h5.label_image"))
-#         )[0]
-#         channel_to_label_q = {}
-#         for channel, df_channel in df_imgs_roi.group_by(("idx.c",)):
-#             channel_to_label_q[channel[0]] = LabelImageQueryDask(
-#                 *df_channel.select(
-#                     ("path.root", "path.h5.label_image.bbx_mask")
-#                 ).rows()[0]
-#             )
-
-#         if strategy == "query":
-#             channels = channels_q
-#             channel_to_label = channel_to_label_q
-#         elif strategy == "dask_lazy":
-#             channels = channels_q.lazy()
-#             channel_to_label = {k: v.lazy() for k, v in channel_to_label_q.items()}
-#         elif strategy == "dask_memory":
-#             channels_lazy = channels_q.lazy()
-#             channels = channels_lazy.compute()
-#             channel_to_label = {
-#                 k: resample_label_to_size(v.compute(), channels)
-#                 for k, v in channel_to_label_q.items()
-#             }
-#         else:
-#             raise ValueError("Unknonw strategy!")
-
-#         df_label_objects_roi = df_label_objects.join(
-#             df_imgs_roi,
-#             on=roi_id_columns,
-#         ).select(
-#             pl.concat_str(object_id_columns, separator=separator).alias("object_id"),
-#             pl.col(bbx_columns),
-#             pl.col("idx.c"),
-#             pl.when(pl.col("bbx_mask.isolate_label") == True)
-#             .then(pl.col("idx.label"))
-#             .otherwise(pl.lit(None))
-#             .alias("label"),
-#         )
-#         for object_id, bbx_tuple, ch_names, labels in (
-#             df_label_objects_roi.group_by("object_id", maintain_order=True)
-#             .agg(
-#                 pl.concat_list(cs.starts_with("bbx").first()).alias("bbx"),
-#                 pl.col("idx.c"),
-#                 pl.col("label"),
-#             )
-#             .rows()
-#         ):
-#             label_object_queries.append(
-#                 LabelObjectQueryDask(
-#                     object_id=separator.join((roi_id, object_id)),
-#                     bbx=BoundingBox.from_flat_tuple(bbx_tuple),
-#                     multi_channel_query=channels,
-#                     channel_to_label_image=channel_to_label,
-#                     channel_to_label=dict(zip(ch_names, labels)),
-#                     fuzzy_mask_sigma=fuzzy_mask_sigma,
-#                 )
-#             )
-#         # for object_id, *bbx in df_label_objects_roi.rows():
-#         #     label_object_queries.append(
-#         #         LabelObjectQuery(
-#         #             object_id=separator.join((roi_id, object_id)),
-#         #             bbx=BoundingBox.from_flat_tuple(bbx),
-#         #             multi_channel_query=channels,
-#         #         )
-#         #     )
-#     return label_object_queries
+def _query_to_lazy(query):
+    return query.lazy()
 
 
-# def _label_object_queries_to_images(
-#     label_object_queries, projection_dim: Literal["z", "y", "x"] | None = None
-# ) -> dict[str, DaskImage]:
-#     if projection_dim is None:
-#         imgs_lazy = {
-#             e.object_id: e.lazy().expand_dims("t") for e in label_object_queries
-#         }
-#     else:
-#         imgs_lazy = {
-#             e.object_id: e.lazy()
-#             .expand_dims("t")
-#             .max(dim=projection_dim, keepdims=True)
-#             for e in label_object_queries
-#         }
-#     return imgs_lazy
+def _queries_to_lazy_images(
+    queries: dict[str, LazyRasterQueryDask], drop_meta: bool = False
+):
+    lazy_images = {}
+    for name, query in tqdm.tqdm(queries.items()):
+        lazy_image = query.lazy()
+        if isinstance(lazy_image, tuple) and drop_meta:
+            lazy_image = lazy_image[0]
+        lazy_images[name] = lazy_image
+    return lazy_images
 
 
-# def _pad_label_obejcts(
-#     imgs: dict[str, DaskImage],
-#     spatial_extent: tuple[int, ...],
-#     projection_dim: Literal["z", "y", "x"] | None = None,
-# ) -> dict[str, DaskImage]:
-#     out_images = {}
+def _queries_to_lazy_bag(queries, npartitions=10):
+    import dask.bag as db
 
-#     sample = next(iter(imgs.values()))
-#     if sample.ndim != 5:
-#         raise ValueError(
-#             "Images need to be 5D: (t, c, z, y, x). Add singleton axis to `imgs`"
-#         )
-
-#     if len(spatial_extent) != 3:
-#         raise ValueError(
-#             "Spatial extent needs to be 3D: (z, y, x). (1, y, x) for 2D images."
-#         )
-
-#     if projection_dim is not None:
-#         projection_axis = ("z", "y", "x").index(projection_dim)
-#         spatial_extent = tuple(
-#             [e if i != projection_axis else 1 for i, e in enumerate(spatial_extent)]
-#         )
-
-#     full_extent = sample.shape[:-3] + tuple(spatial_extent)
-
-#     for name, image in imgs.items():
-#         padded_image = da.zeros(full_extent, dtype=sample.dtype)
-#         paste_region = tuple(
-#             min(canvas_sz, img_sz)
-#             for canvas_sz, img_sz in zip(full_extent, image.shape)
-#         )
-#         paste_slice = tuple(slice(0, e) for e in paste_region)
-#         padded_image[paste_slice] = image[paste_slice]
-#         out_images[name] = padded_image
-#     return out_images
+    bag = db.from_sequence(queries, npartitions=npartitions)
+    return bag.map(_query_to_lazy)
 
 
-# def label_objects_to_images(
-#     resources: "Resources",
-#     rois: list[str] | None,
-#     multiscale_level: int,
-#     bbx_object_type: str,
-#     channels: list[str],
-#     channel_masks: list[str],
-#     isolate_label: list[str],
-#     z_model: str | None = None,
-#     t_model: str | None = None,
-#     quantile_extent: float = 0.95,
-#     strategy: Literal["query", "dask_lazy", "dask_memory"] = "dask_memory",
-#     projection_dim: Literal["z", "y", "x"] | None = "z",
-#     fuzzy_mask_sigma: int | None = 1,
-# ):
-#     if rois is not None:
-#         resources = (
-#             resources.filter(pl.col("idx.roi").is_in(rois))
-#             .pipe_tables(
-#                 lambda x: x.with_columns(pl.col("idx.c").cast(pl.Categorical)),
-#                 include_tables=("z_models",),
-#             )
-#             .pipe(
-#                 _update_table_from_table,
-#                 from_table="images",
-#                 to_tables=("channels", "multiscale_levels", "z_models", "t_models"),
-#             )
-#             .pipe(
-#                 _update_table_from_table,
-#                 from_table="label_images",
-#                 to_tables=("object_types",),
-#             )
-#         )
+def _aggregate_label_object_paths(
+    r,
+    bbx_object_type: str,
+    channels: list[str],
+    channel_masks: list[str | None] | None = None,
+    isolate_label: list[bool] | bool = True,
+    multiscale_level: int = 0,
+    z_model: str | None = None,
+    t_model: str | None = None,
+    rois: list[str] | None = None,
+):
+    if channel_masks is not None:
+        if len(channels) != len(channel_masks):
+            raise ValueError(
+                f"If channel_masks provided they need to be the same number as channels: {len(channels)=} != {len(channel_masks)=}"
+            )
+        if isinstance(isolate_label, bool):
+            isolate_label = [isolate_label] * len(channel_masks)
 
-#     df_imgs, df_label_objects = _aggregate_label_object_paths(
-#         resources,
-#         bbx_object_type=bbx_object_type,
-#         channels=channels,
-#         multiscale_level=multiscale_level,
-#         channel_masks=channel_masks,
-#         # channel_masks=None,
-#         isolate_label=isolate_label,
-#         # isolate_label=[False, True, True],
-#         z_model=z_model,
-#         t_model=t_model,
-#     )
+        isolate_label_channels = [
+            ch for ch, isolate in zip(channels, isolate_label) if isolate
+        ]
+    if rois is None:
+        rois = r.rois["idx.roi"].to_list()
 
-#     spatial_extent = get_quantile_extent(df_label_objects, quantile_extent)
+    df_imgs = (
+        _aggregate_image_paths(
+            r,
+            channels,
+            multiscale_level=multiscale_level,
+            # channel_masks=None,
+            channel_masks=channel_masks,
+            z_model=z_model,
+            t_model=t_model,
+        )
+        .with_columns(
+            pl.col("idx.c")
+            .is_in(isolate_label_channels)
+            .alias("bbx_mask.isolate_label")
+        )
+        .filter(pl.col("idx.roi").is_in(rois))
+    )
 
-#     lo_queries = _label_objects_to_queries(
-#         df_label_objects, df_imgs, strategy=strategy, fuzzy_mask_sigma=fuzzy_mask_sigma
-#     )
-#     # return lo_queries
+    df_label_objects = r.label_objects.filter(
+        pl.col("idx.o") == bbx_object_type
+    ).filter(pl.col("idx.roi").is_in(rois))
+    df_label_objects = label_objects_scale_bbx(
+        r.multiscale_levels, df_label_objects, to_level=multiscale_level
+    )
+    return df_imgs, df_label_objects
 
-#     lo_imgs_lazy = _label_object_queries_to_images(
-#         lo_queries, projection_dim=projection_dim
-#     )
 
-#     lo_imgs_padded_lazy = _pad_label_obejcts(
-#         lo_imgs_lazy, spatial_extent=spatial_extent, projection_dim=projection_dim
-#     )
+def _label_objects_to_queries(
+    df_label_objects: pl.DataFrame,
+    df_imgs: pl.DataFrame,
+    roi_id_columns: tuple[str, ...] = ("idx.roi", "idx.m"),
+    object_id_columns: tuple[str, ...] = ("idx.o", "idx.label"),
+    bbx_columns: tuple[str, ...] = (
+        "bbx.z.lower",
+        "bbx.z.upper",
+        "bbx.y.lower",
+        "bbx.y.upper",
+        "bbx.x.lower",
+        "bbx.x.upper",
+    ),
+    fuzzy_mask_sigma: int | None = None,
+    separator: str = "__",
+    strategy: Literal["lazy", "memory"] = "lazy",
+    dask_chunk_size: tuple[int, ...] | str = "auto",
+):
+    label_object_queries = []
 
-#     lo_imgs_padded = da.compute(lo_imgs_padded_lazy)[0]
+    for roi_id_parts, df_imgs_roi in df_imgs.group_by(
+        roi_id_columns, maintain_order=True
+    ):
+        roi_id = separator.join(str(e) for e in roi_id_parts)
 
-#     return lo_imgs_padded, df_label_objects
+        channels_q = _images_to_queries(
+            df_imgs_roi.with_columns(pl.lit(None).cast(pl.Categorical).alias("mask.o")),
+            separator=separator,
+            group=roi_id_columns,
+            dask_chunk_size=dask_chunk_size,
+        )[roi_id]
+        if strategy == "lazy":
+            channels = channels_q.lazy()
+        else:
+            channels = channels_q.compute()
+
+        labels_ot_to_q = _label_images_to_queries(
+            df_imgs_roi,
+            separator=separator,
+            group=("mask.o",),
+            paths=("roi.path", "mask.o.path", "mask.resample_scale_factors"),
+            dask_chunk_size=dask_chunk_size,
+        )
+        if strategy == "lazy":
+            labels_lazy = {k: v.lazy() for k, v in labels_ot_to_q.items()}
+        else:
+            labels_lazy = {k: v.compute() for k, v in labels_ot_to_q.items()}
+        channel_to_mask_object_type = dict(
+            zip(df_imgs_roi["idx.c"], df_imgs_roi["mask.o"])
+        )
+        channel_to_label = {
+            k: labels_lazy[v] for k, v in channel_to_mask_object_type.items()
+        }
+
+        df_label_objects_roi = df_label_objects.join(
+            df_imgs_roi,
+            on=roi_id_columns,
+        ).select(
+            pl.concat_str(object_id_columns, separator=separator).alias("object_id"),
+            pl.col(bbx_columns),
+            pl.col("idx.c"),
+            pl.when(pl.col("bbx_mask.isolate_label"))
+            .then(pl.col("idx.label"))
+            .otherwise(pl.lit(None))
+            .alias("label"),
+        )
+        for object_id, bbx_tuple, ch_names, labels in (
+            df_label_objects_roi.group_by("object_id", maintain_order=True)
+            .agg(
+                pl.concat_list(cs.starts_with("bbx").first()).alias("bbx"),
+                pl.col("idx.c"),
+                pl.col("label"),
+            )
+            .rows()
+        ):
+            label_object_queries.append(
+                LabelObjectQueryDask(
+                    object_id=separator.join((roi_id, object_id)),
+                    bbx=BoundingBox.from_flat_tuple(bbx_tuple),
+                    multi_channel_query=channels,
+                    channel_to_label_image=channel_to_label,
+                    channel_to_label=dict(zip(ch_names, labels)),
+                    fuzzy_mask_sigma=fuzzy_mask_sigma,
+                )
+            )
+    return label_object_queries

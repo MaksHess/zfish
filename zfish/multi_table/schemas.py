@@ -1,5 +1,13 @@
+# %%
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
 import polars as pl
 import polars.selectors as cs
+
+if TYPE_CHECKING:
+    from polars.type_aliases import SelectorType
+
 
 # Base coordinate names for fast changes:
 IDX = "idx"
@@ -32,11 +40,35 @@ CHILD_IDX = (
     f"{I}{SI}{LABEL}{SI}{CHILD}",
 )
 
+LABEL_OBJECT_IDX = (f"{IDX}{SI}{OBJ}", f"{IDX}{SI}{ROI}", f"{IDX}{SI}{LABEL}")
 
-CAT_TYPE = pl.Categorical(ordering="physical")
+
+CAT_TYPE = pl.Categorical(ordering="lexical")
 
 IDX_SEL = cs.starts_with(f"{IDX}{SI}")
-LABEL_OBJECT_SEL = cs.by_name(f"{IDX}{SI}{OBJ}", f"{IDX}{SI}{ROI}", f"{IDX}{SI}{LABEL}")
+LABEL_OBJECT_SEL = cs.by_name(LABEL_OBJECT_IDX)
+SEL_IDX = IDX_SEL
+SEL_LABEL_OBJECT = LABEL_OBJECT_SEL
+SEL_O = cs.starts_with(f"{IDX}{SI}{OBJ}")
+SEL_ROI = cs.starts_with(f"{IDX}{SI}{ROI}")
+SEL_LABEL = cs.starts_with(f"{IDX}{SI}{LABEL}")
+SEL_PARENT = cs.by_name(PARENT_IDX)
+SEL_CHILD = cs.by_name(CHILD_IDX)
+
+
+@dataclass
+class PolarsSelector:
+    idx: "SelectorType" = SEL_IDX
+    roi: "SelectorType" = SEL_ROI
+    object_type: "SelectorType" = SEL_O
+    label: "SelectorType" = SEL_LABEL
+    label_object: "SelectorType" = SEL_LABEL_OBJECT
+    parent: "SelectorType" = SEL_PARENT
+    child: "SelectorType" = SEL_CHILD
+    empty: "SelectorType" = ~cs.all()
+
+
+sel = PolarsSelector()
 
 
 def build_lazy_tables(schema):
@@ -54,7 +86,7 @@ def build_schema():
         "row": CAT_TYPE,
         "col": CAT_TYPE,
         "is_control_well": pl.Boolean,
-        "control_well_for_acquisition": pl.UInt8,
+        "control_well_for_acquisition": pl.UInt16,
         "translate.plate.x": pl.Float64,
         "translate.plate.y": pl.Float64,
     }
@@ -73,7 +105,9 @@ def build_schema():
         "stain": CAT_TYPE,
         "acquisition": pl.UInt8,
         "wavelength": pl.UInt16,
-        "contrast_limits": pl.Array(pl.Float64, 2),
+        "contrast_limits": pl.List(
+            pl.Float64
+        ),  # CANNOT USE ARRAY HERE, breaks upon read/write!!!!
     }
 
     schema["resources.object_types"] = {
@@ -110,7 +144,7 @@ def build_schema():
         f"{I}{SI}z_model": CAT_TYPE,
         "z_model.full_name": CAT_TYPE,
         "z_model.type": CAT_TYPE,
-        f"z_model.{OBJ}.mask": CAT_TYPE,
+        f"z_model.{OBJ}": CAT_TYPE,
         "z_model.dtf": CAT_TYPE,
         "z_model.ndim": pl.UInt8,
         "z_model.path": pl.String,
@@ -359,3 +393,5 @@ def build_schema():
 
 
 EMPTY_TABLES = build_lazy_tables(build_schema())
+
+# %%

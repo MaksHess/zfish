@@ -394,10 +394,14 @@ def _lazy_load_labels(
     return labels
 
 
+SCALE_DIMS = ("t", "z", "y", "x")
+
+
 def _to_si(img_w_meta):
     img, meta = img_w_meta
-    scale = dict(zip(meta.dims, meta.scale))
-    translation = dict(zip(meta.dims, meta.scale))
+    scale_dims = [e for e in meta.dims if e in SCALE_DIMS]
+    scale = dict(zip(scale_dims, meta.scale))
+    translation = dict(zip(scale_dims, meta.origin))
     if meta.type_ == "intensity":
         return to_spatial_image(
             np.expand_dims(img, 0),

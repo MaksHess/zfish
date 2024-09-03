@@ -1,0 +1,29 @@
+base_level: 0
+bbx_object_type: cells
+channels:
+- DAPI.1
+- bCatenin.1
+- Pol-II-S2P.0
+- Pol-II-S5P.2
+- PCNA.0
+channel_masks:
+- nucleiRaw3
+- cells
+- nucleiRaw3
+- nucleiRaw3
+- nucleiRaw3
+dask_chunk_size:
+- 10
+- 2000
+- 2000
+fuzzy_mask_sigma: 1
+out_fld: /data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/thumbnails
+out_fn: thumbnails.zarr
+out_fn_idx_fstring: '{}_idx.parquet'
+project: z
+resource_fld: /data/active/hmax/MARVWY_RESTORED/20220721_ZE4i2_aligned1/multi_tables
+size_group: cycle
+size_padding_perc: 0.1
+size_quantile: 0.99
+t_model: Exp
+z_model: ExpPos-2D

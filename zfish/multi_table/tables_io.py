@@ -18,7 +18,7 @@ from zfish.multi_table.table_base_mixin import (
 
 WriteStrategy: TypeAlias = Literal["overwrite_all", "overwrite_non_empty", "raise"]
 
-pl.enable_string_cache()
+USE_PYARROW = False
 
 TABLES_PATH = Path(
     r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\multi_table\data"
@@ -86,7 +86,7 @@ def scan_tables(
 def read_tables(
     path: str,
     table_names: tuple[str, ...] | None = None,
-    use_pyarrow: bool = True,
+    use_pyarrow: bool = USE_PYARROW,
     **kwargs,
 ) -> dict[str, pl.DataFrame]:
     if table_names is not None:
@@ -106,7 +106,7 @@ def write_tables(
     tables: dict[str, pl.DataFrame],
     overwrite: bool = False,
     write_empty: bool = False,
-    use_pyarrow: bool = True,
+    use_pyarrow: bool = USE_PYARROW,
 ):
     if not overwrite:
         for name in tables.keys():
@@ -146,6 +146,7 @@ class LazyTablesBase(TablesBaseMixin):
         path: str,
         name_map: dict[str, str] = TABLE_NAME_MAP,
         include_tables: tuple[str, ...] | None = None,
+        cast_schema: bool = True,
     ) -> Self:
         if include_tables is None:
             load_table_names = cls._table_names
@@ -160,7 +161,13 @@ class LazyTablesBase(TablesBaseMixin):
                 [name_map[table_name] for table_name in load_table_names]
             ),
         )
-        renamed_tables = {k: tables[name_map.get(k, k)] for k in load_table_names}
+        if cast_schema:
+            renamed_tables = {
+                k: tables[name_map.get(k, k)].cast(DEFAULT_TABLES[k].schema)
+                for k in load_table_names
+            }
+        else:
+            renamed_tables = {k: tables[name_map.get(k, k)] for k in load_table_names}
         return cls.from_tables(renamed_tables)
 
 
@@ -185,6 +192,7 @@ class TablesBase(TablesBaseMixin):
         path: str,
         name_map: dict[str, str] = TABLE_NAME_MAP,
         include_tables: tuple[str, ...] | None = None,
+        cast_schema: bool = True,
         use_pyarrow: bool = True,
     ) -> Self:
         if include_tables is None:
@@ -201,10 +209,22 @@ class TablesBase(TablesBaseMixin):
             ),
             use_pyarrow=use_pyarrow,
         )
-        renamed_tables = {k: tables[name_map.get(k, k)] for k in load_table_names}
+        if cast_schema:
+            renamed_tables = {
+                k: tables[name_map.get(k, k)].cast(DEFAULT_TABLES[k].schema)
+                for k in load_table_names
+            }
+        else:
+            renamed_tables = {k: tables[name_map.get(k, k)] for k in load_table_names}
         return cls.from_tables(renamed_tables)
 
-    def write_tables(self, path: str, overwrite=False, write_empty=False):
+    def write_tables(
+        self,
+        path: str,
+        overwrite: bool = False,
+        write_empty: bool = False,
+        use_pyarrow: bool = USE_PYARROW,
+    ):
         write_tables(
             path=path,
             tables={
@@ -213,6 +233,7 @@ class TablesBase(TablesBaseMixin):
             },
             overwrite=overwrite,
             write_empty=write_empty,
+            use_pyarrow=use_pyarrow,
         )
 
 
@@ -336,30 +357,59 @@ class Features(TablesBase):
 
 
 def scan_resources_and_features(
-    root: str = TABLES_PATH, name_map: dict[str, str] = TABLE_NAME_MAP, **kwargs
+    root: str = TABLES_PATH,
+    name_map: dict[str, str] = TABLE_NAME_MAP,
+    cast_schema: bool = True,
 ) -> tuple[LazyResources, LazyFeatures]:
-    lazy_resources = LazyResources.from_path(root, name_map=TABLE_NAME_MAP, **kwargs)
-    lazy_features = LazyFeatures.from_path(root, name_map=TABLE_NAME_MAP, **kwargs)
+    lazy_resources = LazyResources.from_path(
+        root, name_map=TABLE_NAME_MAP, cast_schema=cast_schema
+    )
+    lazy_features = LazyFeatures.from_path(
+        root, name_map=TABLE_NAME_MAP, cast_schema=cast_schema
+    )
     return lazy_resources, lazy_features
 
 
 def read_resources(
     root: str = TABLES_PATH,
     name_map: dict[str, str] = TABLE_NAME_MAP,
-    use_pyarrow=True,
-    **kwargs,
+    use_pyarrow: bool = USE_PYARROW,
+    cast_schema: bool = True,
+    include_tables: tuple[str, ...] | None = None,
 ) -> Resources:
     resources = Resources.from_path(
-        root, name_map=TABLE_NAME_MAP, use_pyarrow=use_pyarrow, **kwargs
+        root,
+        name_map=TABLE_NAME_MAP,
+        use_pyarrow=use_pyarrow,
+        cast_schema=cast_schema,
+        include_tables=include_tables,
     )
     return resources
 
 
 def read_resources_and_features(
-    root: str = TABLES_PATH, name_map: dict[str, str] = TABLE_NAME_MAP, **kwargs
+    root: str = TABLES_PATH,
+    name_map: dict[str, str] = TABLE_NAME_MAP,
+    use_pyarrow: bool = USE_PYARROW,
+    cast_schema: bool = True,
+    include_resource_tables: tuple[str, ...] | None = None,
+    include_feature_tables: tuple[str, ...] | None = None,
 ) -> tuple[Resources, Features]:
-    resources = Resources.from_path(root, name_map=TABLE_NAME_MAP, **kwargs)
-    features = Features.from_path(root, name_map=TABLE_NAME_MAP, **kwargs)
+    with pl.StringCache():
+        resources = Resources.from_path(
+            root,
+            name_map=TABLE_NAME_MAP,
+            use_pyarrow=USE_PYARROW,
+            cast_schema=cast_schema,
+            include_tables=include_resource_tables,
+        )
+        features = Features.from_path(
+            root,
+            name_map=TABLE_NAME_MAP,
+            use_pyarrow=USE_PYARROW,
+            cast_schema=cast_schema,
+            include_tables=include_feature_tables,
+        )
     return resources, features
 
 
@@ -529,12 +579,16 @@ def _unstack_column_to_column_name(
     elif len(column_names) > 1:
         df = df.with_columns(
             pl.concat_str(
-                [pl.col(e).cast(pl.String) for e in column_names], separator=fidx_sep
+                [pl.col(e).cast(pl.String) for e in column_names],
+                separator=fidx_sep,
+                ignore_nulls=True,
             )
         )
     column_name = column_names[0]
 
-    channel_names = df.select(column_name).unique()[column_name].to_list()
+    channel_names = (
+        df.select(column_name).unique(maintain_order=True)[column_name].to_list()
+    )
     dfs = []
     for channel_name in channel_names:
         if prefix:
@@ -556,13 +610,15 @@ def _unstack_column_to_column_name(
 
 def to_wide(
     df,
-    on_sel,
-    index_sel,
+    on_sel=IDX_SEL - LABEL_OBJECT_SEL,
+    index_sel=LABEL_OBJECT_SEL,
     values_sel=None,
     prefix=True,
     sep="_",
     fidx_sep="-",
 ):
+    if df.height == 0:
+        return df.select(index_sel)
     return _unstack_column_to_column_name(
         df,
         sep=sep,

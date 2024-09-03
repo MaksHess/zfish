@@ -32,7 +32,7 @@ def compute_cardinality_hierarchy(df_hierarchy, df_o):
     )
     # join the result to the o table, where the relationships are initially specified
     # return df_cardinality_child, df_cardinality_parent
-    return (
+    df_joined = (
         df_o.explode("parents")
         .with_columns(pl.col("parents").cast(pl.Categorical))
         .join(
@@ -45,7 +45,9 @@ def compute_cardinality_hierarchy(df_hierarchy, df_o):
             how="full",
             coalesce=True,
         )
-        .select(
+    )
+    return df_joined
+    return df_joined.select(
             "idx.o",
             "hierarchy_level",
             "parents",

@@ -47,7 +47,8 @@ def compute_cardinality_hierarchy(df_hierarchy, df_o):
         )
     )
     return df_joined
-    return df_joined.select(
+    return (
+        df_joined.select(
             "idx.o",
             "hierarchy_level",
             "parents",

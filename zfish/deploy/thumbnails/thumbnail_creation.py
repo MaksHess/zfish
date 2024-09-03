@@ -82,7 +82,7 @@ def main():
         .rows()
     )
 
-    row_to_process = rows_to_process[args.idx]
+    row_to_process = rows_to_process[int(args.idx)]
 
     roi, cycle, z_extent, xy_extent = row_to_process
 

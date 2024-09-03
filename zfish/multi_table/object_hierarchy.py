@@ -46,19 +46,18 @@ def compute_cardinality_hierarchy(df_hierarchy, df_o):
             coalesce=True,
         )
     )
-    return df_joined
     return (
         df_joined.select(
             "idx.o",
             "hierarchy_level",
             "parents",
             pl.concat_str(
-                (pl.col("cardinality_child") > 1).replace(
-                    {True: "m", False: "1"}, return_dtype=pl.String
-                ),
-                (pl.col("cardinality_parent") > 1).replace(
-                    {True: "m", False: "1"}, return_dtype=pl.String
-                ),
+                (pl.col("cardinality_child") > 1)
+                .cast(pl.String)
+                .replace({"true": "m", "false": "1"}, return_dtype=pl.String),
+                (pl.col("cardinality_parent") > 1)
+                .cast(pl.String)
+                .replace({"true": "m", "false": "1"}, return_dtype=pl.String),
                 separator=":",
             ).alias("cardinality"),
         )

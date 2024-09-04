@@ -560,6 +560,7 @@ def _aggregate_image_paths(
     df_paths = (
         df_imgs.with_columns(
             pl.col("idx.c")
+            .cast(pl.String)
             .replace(dict(zip(channels, channel_masks)))
             .cast(pl.Categorical)
             .alias("mask.o")
@@ -783,12 +784,12 @@ def _aggregate_label_object_paths(
             raise ValueError(
                 f"If channel_masks provided they need to be the same number as channels: {len(channels)=} != {len(channel_masks)=}"
             )
-        if isinstance(isolate_label, bool):
-            isolate_label = [isolate_label] * len(channel_masks)
+    if isinstance(isolate_label, bool):
+        isolate_label = [isolate_label] * len(channels)
 
-        isolate_label_channels = [
-            ch for ch, isolate in zip(channels, isolate_label) if isolate
-        ]
+    isolate_label_channels = [
+        ch for ch, isolate in zip(channels, isolate_label) if isolate
+    ]
     if rois is None:
         rois = r.rois["idx.roi"].to_list()
 

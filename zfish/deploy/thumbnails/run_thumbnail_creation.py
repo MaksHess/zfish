@@ -103,7 +103,11 @@ def main():
         )
 
     df_extent = (
-        pl.DataFrame(rows, schema=[params.size_group, "bbx-e-z", "bbx-e-y", "bbx-e-x"])
+        pl.DataFrame(
+            rows,
+            schema=[params.size_group, "bbx-e-z", "bbx-e-y", "bbx-e-x"],
+            orient="row",
+        )
         .with_columns(
             ((cs.starts_with("bbx") * (1 + params.size_padding_perc)).ceil()).cast(
                 pl.Int32

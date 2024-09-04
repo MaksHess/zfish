@@ -1,10 +1,11 @@
+# %%
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeAlias
 
 import polars as pl
 import polars.selectors as cs
-from polars.type_aliases import JoinStrategy, JoinValidation, SelectorType
+from polars._typing import JoinStrategy, JoinValidation, SelectorType
 from typing_extensions import Self
 
 from zfish.features.polars_utils import split_and_melt_column_names_on
@@ -211,7 +212,7 @@ class TablesBase(TablesBaseMixin):
         )
         if cast_schema:
             renamed_tables = {
-                k: tables[name_map.get(k, k)].cast(DEFAULT_TABLES[k].schema)
+                k: tables[name_map.get(k, k)].cast(DEFAULT_TABLES[k].collect_schema())
                 for k in load_table_names
             }
         else:

@@ -118,11 +118,12 @@ roi.images.attrs["napari_channel_kwargs"] = {
 viewer = imshow_roi(roi, roi_name_as_prefix=True)
 
 # %%
-from zfish.features.ccp.classifiers.clf_io import get_annotations, load_classifier
+from zfish.classifiers.clf_io import get_annotations, load_classifier
 
 # %%
-clf = load_classifier(r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\features\ccp\classifiers\nucleiRaw3_classifier3.clf")
+# clf = load_classifier(r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\features\ccp\classifiers\nucleiRaw3_classifier3.clf")
+clf = load_classifier(r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\classifiers\annotation_classifiers\nucleiRaw3_classifier3.clf")
 df_ann = get_annotations(clf)
-df_ann.write_parquet(r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\features\ccp\classifiers\nucleiRaw3_classifier3_annotations.parquet")
+# df_ann.write_parquet(r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\features\ccp\classifiers\nucleiRaw3_classifier3_annotations.parquet")
 # %%
 df_ann.join(df_meta, on=['roi'])['cycle'].value_counts()

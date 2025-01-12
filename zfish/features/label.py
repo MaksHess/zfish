@@ -6,7 +6,6 @@ if TYPE_CHECKING:
 
     from zfish.roi.spatial_roi import Roi
 
-
 from pydantic import BaseModel, Field
 
 from zfish.features._base import get_si_features_df
@@ -34,14 +33,18 @@ class LabelQuery(BaseModel, FeatureQuery):
     def compute(self, roi: "Roi") -> "pl.DataFrame":
         return get_label_features(**self.load_resources(roi))
 
+
 LabelFeatureLike: TypeAlias = tuple[LabelFeature, ...] | tuple[str, ...]
+
 
 def get_label_features(
     label_image: LabelImage,
     features: LabelFeatureLike = tuple(DefaultLabelFeature),
 ) -> "pl.DataFrame":
     valid_label_features = tuple(str(LabelFeature(e)) for e in features)
-    return get_si_features_df(label_image, props=valid_label_features, named_features=True)
+    return get_si_features_df(
+        label_image, props=valid_label_features, named_features=True
+    )
 
 
 def get_centroids(label_image: LabelImage) -> "pl.DataFrame":
@@ -54,5 +57,3 @@ def get_position_and_orientation_features(label_image: LabelImage) -> "pl.DataFr
         props=tuple(PositionAndOrientationLabelFeature),
         named_features=True,
     )
-
-# %%

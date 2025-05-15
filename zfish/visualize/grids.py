@@ -3,17 +3,22 @@ import warnings
 from functools import partial
 from itertools import product, repeat
 from pathlib import Path
-from typing import Any, Callable, Union
+from typing import TYPE_CHECKING, Any, Callable, TypeAlias, TypeVar, Union
 
 import h5py
 import numpy as np
 import pandas as pd
-from numpy.typing import NDArray
+from loguru import logger
+from numpy.typing import ArrayLike, NDArray
 from tqdm import tqdm
-
 from zfish.io import h5
 
+if TYPE_CHECKING:
+    import dask.array as da
+
 ROW_TO_NUMBER = {k: v for k, v in zip("ABCDEFGH", range(8))}
+
+Index: TypeAlias = str | int | tuple[str | int, ...]
 
 
 def get_filenames(*flds: Union[str, Path]) -> list[Path]:
@@ -28,9 +33,10 @@ def filenames_from_prefix(fld: Union[str, Path], pfxs: list[str]) -> list[Path]:
     return fns
 
 
+# TODO: Move to SpatialImage instead of 5D images.
 def load_channels(
     fns: list[Path], selectors: Union[dict[str, Any], list[dict[str, Any]]], level: int
-) -> dict[str, np.array]:
+) -> dict[str, NDArray]:
     if isinstance(selectors, dict):
         selectors = [selectors]
 
@@ -68,6 +74,10 @@ def line_grid(sites: pd.Series, left_to_right=True):
     return pd.DataFrame(indices, columns=["iy", "ix"], index=sites.sort_values().index)
 
 
+def rect_grid_factory(left_to_right=True, aspect_ratio=2):
+    return partial(rect_grid, left_to_right=left_to_right, aspect_ratio=aspect_ratio)
+
+
 def rect_grid(sites: pd.Series, left_to_right=True, aspect_ratio=2):
     n = len(sites)
     ny = int(np.ceil(np.sqrt(n * aspect_ratio)))
@@ -91,53 +101,122 @@ def square_grid(sites: pd.Series, left_to_right=True):
     )
 
 
+def _expand_dims(img: NDArray):
+    if img.ndim == 5:
+        return img
+    elif img.ndim == 4:
+        return np.expand_dims(img, 0)
+    elif img.ndim == 3:
+        return np.expand_dims(img, axis=(0, 1))
+    elif img.ndim == 2:
+        return np.expand_dims(img, axis=(0, 1, 2))
+    else:
+        raise ValueError(
+            "Unknown number of dimensions. Try providing a dict[str, Array5D] (t, c, z, y, x) to `arrange_on_grid`."
+        )
+
+
 def arrange_on_grid(
-    raw_imgs: dict[str, NDArray],
-    order: pd.Series| list | None = None,
-    index_function: Callable[[NDArray], pd.DataFrame] = rect_grid,
+    raw_imgs: dict[Index, ArrayLike],
+    order: pd.Series | list[Index] | None = None,
+    index_function: Callable[[pd.Series], pd.DataFrame] = rect_grid,
     margin_px: int = 10,
 ) -> NDArray:
-    
+    # If no order provided just use range(len(n_imgs)), i. e. the insert order of the `raw_imgs` dict.
     if order is None:
         order = pd.Series(np.arange(len(raw_imgs.keys())), index=list(raw_imgs.keys()))
     if isinstance(order, list):
-        order = pd.Series(order, index=list(raw_imgs.keys()))
-        
+        order = pd.Series(np.arange(len(order)), index=order)
+
+    # Select objects that are both keys of `raw_imgs` and in the `order.index`
     embs = list(set(raw_imgs.keys()).intersection(set(order.index)))
-    order = order.loc[embs]
-    imgs = {k: v for k, v in raw_imgs.items() if k in embs}
-    print(embs)
-    print(imgs)
+    order_embs = order.loc[embs]
+    imgs = {k: _expand_dims(v) for k, v in raw_imgs.items() if k in embs}
+
+    logger.info(f"arranging {len(imgs)}/{len(raw_imgs)} images.")
+    logger.info(f"using {len(order_embs)}/{len(order)} from order Series.")
+
     dtype = imgs[list(imgs.keys())[0]].dtype
     max_extent = np.array([img.shape for img in imgs.values()]).max(axis=0)
-    print(max_extent)
+    logger.info(f"Panel shape = {max_extent}")
 
     dt_site, dc_site, dz_site, dy_site, dx_site = max_extent
     dy_margin = dx_margin = margin_px
 
-    site_indices = index_function(order)
+    site_indices = index_function(order_embs)
 
-    canvas_extent_yx = (site_indices.max().values + 1) * np.array(
+    canvas_extent_yx = (np.asarray(site_indices.max().values) + 1) * np.array(
         [dy_site + dy_margin, dx_site + dx_margin]
     ) - np.array([dy_margin, dx_margin])
 
     canvas = np.zeros((dt_site, dc_site, dz_site, *canvas_extent_yx), dtype=dtype)
     for site, index in site_indices.iterrows():
-        _, _, dz_current, dy_current, dx_current = imgs[site].shape
+        _, _, dz_current, dy_current, dx_current = imgs[str(site)].shape
         dy, dx = index.values * np.array([dy_site + dy_margin, dx_site + dx_margin])
         canvas[:, :, :dz_current, dy : dy + dy_current, dx : dx + dx_current] = imgs[
-            site
+            str(site)
         ]
     return canvas
 
 
+# %%
 def arrange_on_dask_grid(
+    raw_imgs: dict[str, "da.Array"],
+    order: pd.Series | list | None = None,
+    index_function: Callable[[pd.Series], pd.DataFrame] = rect_grid,
+    margin_px: int = 10,
+) -> "da.Array":
+    import dask.array as da
+
+    # If no order provided just use range(len(n_imgs)), i. e. the insert order of the `raw_imgs` dict.
+    if order is None:
+        order = pd.Series(np.arange(len(raw_imgs.keys())), index=list(raw_imgs.keys()))
+    if isinstance(order, list):
+        order = pd.Series(order, index=list(raw_imgs.keys()))
+
+    # Select objects that are both keys of `raw_imgs` and in the `order.index`
+    embs = list(set(raw_imgs.keys()).intersection(set(order.index)))
+    order_embs = order.loc[embs]
+    imgs = {k: _expand_dims(v) for k, v in raw_imgs.items() if k in embs}
+
+    logger.info(f"arranging {len(imgs)}/{len(raw_imgs)} images.")
+    logger.info(f"using {len(order_embs)}/{len(order)} from order Series.")
+
+    dtype = imgs[list(imgs.keys())[0]].dtype
+    max_extent = np.array([img.shape for img in imgs.values()]).max(axis=0)
+    logger.info(f"Panel shape = {max_extent}")
+
+    dt_site, dc_site, dz_site, dy_site, dx_site = max_extent
+    dy_margin = dx_margin = margin_px
+
+    site_indices = index_function(order_embs)
+
+    canvas_extent_yx = (
+        (da.asarray(site_indices.max().values) + 1)
+        * da.array([dy_site + dy_margin, dx_site + dx_margin])
+        - da.array([dy_margin, dx_margin])
+    ).compute()
+
+    # canvas_extent_yx.compute()
+    # return canvas_extent_yx
+
+    canvas = da.zeros((dt_site, dc_site, dz_site, *canvas_extent_yx), dtype=dtype)
+    for site, index in site_indices.iterrows():
+        _, _, dz_current, dy_current, dx_current = imgs[str(site)].shape
+        dy, dx = index.values * da.array([dy_site + dy_margin, dx_site + dx_margin])
+        canvas[:, :, :dz_current, dy : dy + dy_current, dx : dx + dx_current] = imgs[
+            str(site)
+        ]
+    return canvas
+
+
+# FIXME: I don't think this works.
+def _arrange_on_dask_grid(
     raw_imgs: dict[str, NDArray],
     order: pd.Series,
-    index_function: Callable[[NDArray], pd.DataFrame] = rect_grid,
+    index_function: Callable[[pd.Series], pd.DataFrame] = rect_grid,
     margin_px: int = 10,
 ) -> NDArray:
-
     import dask.array as da
 
     embs = list(set(raw_imgs.keys()).intersection(set(order.index)))
@@ -153,16 +232,16 @@ def arrange_on_dask_grid(
 
     site_indices = index_function(order)
 
-    canvas_extent_yx = (site_indices.max().values + 1) * np.array(
+    canvas_extent_yx = (np.asarray(site_indices.max().values) + 1) * np.array(
         [dy_site + dy_margin, dx_site + dx_margin]
     ) - np.array([dy_margin, dx_margin])
 
     canvas = da.zeros((dt_site, dc_site, dz_site, *canvas_extent_yx), dtype=dtype)
     for site, index in site_indices.iterrows():
-        _, _, dz_current, dy_current, dx_current = imgs[site].shape
+        _, _, dz_current, dy_current, dx_current = imgs[str(site)].shape
         dy, dx = index.values * np.array([dy_site + dy_margin, dx_site + dx_margin])
         canvas[:, :, :dz_current, dy : dy + dy_current, dx : dx + dx_current] = imgs[
-            site
+            str(site)
         ]
     return canvas
 
@@ -172,9 +251,9 @@ def arrange_in_buckets(
     meta: pd.DataFrame,
     group_by: str,
     sort_by: str | None = None,
-    outer_index_function: Callable[[NDArray], pd.DataFrame] = square_grid,
+    outer_index_function: Callable[[pd.Series], pd.DataFrame] = square_grid,
     outer_margin: int = 100,
-    inner_index_function: Callable[[NDArray], pd.DataFrame] = square_grid,
+    inner_index_function: Callable[[pd.Series], pd.DataFrame] = square_grid,
     inner_margin: int = 10,
 ) -> NDArray:
     embs = list(set(raw_imgs.keys()).intersection(set(meta.index)))
@@ -220,3 +299,6 @@ def set_camera_view(viewer, camera):
 
 def get_camrea(viewer):
     return viewer.camera
+
+
+# %%

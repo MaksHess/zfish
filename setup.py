@@ -23,6 +23,7 @@ requirements = [
     "tqdm",
     "toolz",
     "napari[all]",
+    "pandera[polars]",
     "pydantic",
     "pydantic_yaml",
     "spatial_image",
@@ -35,13 +36,14 @@ requirements = [
     "pingouin",
     "numba",
     "python-forge",
-    "feature_engine",
+    # "feature_engine",
     "strenum",
     "datashader",
     "holoviews",
     "plotly",
     "KDEpy",
     "cmap",
+    "dask_image",
 ]
 
 test_requirements = []

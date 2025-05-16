@@ -118,7 +118,7 @@ def get_distance_features(
             struct_index=struct_index,
         )
         df = _get_distance_at_centroid(df, dt)
-        dfs.append(df.select([pl.col(index), pl.exclude(index).suffix(name)]))
+        dfs.append(df.select([pl.col(index), pl.exclude(index).name.suffix(name)]))
     return pl.concat(
         [dfs[0].select(index), *[df.drop(index) for df in dfs]], how="horizontal"
     )
@@ -127,8 +127,8 @@ def get_distance_features(
 def _get_distance_at_centroid(df: pl.DataFrame, distance_transform: DistanceTransform):
     return df.with_columns(
         [
-            pl.col("^.*Centroid$").apply(
-                lambda x: _lookup_physical_point(x, distance_transform)
+            pl.col("^.*Centroid$").map_elements(
+                lambda x: _lookup_physical_point(x, distance_transform), return_dtype=pl.Float64
             ),
         ]
     )

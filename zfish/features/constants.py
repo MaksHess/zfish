@@ -1,5 +1,7 @@
-"""Moved to separate file for fast imports."""
-# %%
+"""Constants containing the feature names and default configuration for
+raster features."""
+
+# TODO: Maybe config (defaults) should be in a separate file
 from dataclasses import dataclass
 from enum import auto
 
@@ -16,6 +18,7 @@ class DensityParams:
     touch: tuple[int, ...] = tuple([1])
     adjacency_aggfuncs: tuple[str, ...] = tuple(["Count"])
     distance_aggfuncs: tuple[str, ...] = tuple(["Mean", "Max"])
+
 
 # For label features in `zfish.features.labels`
 class LabelFeature(PascalCaseStrEnum):
@@ -75,6 +78,7 @@ class PositionAndOrientationLabelFeature(PascalCaseStrEnum):
     BOUNDING_BOX = auto()
     ORIENTED_BOUNDING_BOX = auto()
 
+
 # For intensity features in `zfish.features.intensity`
 class IntensityFeature(PascalCaseStrEnum):
     ## Intensity Distibution Features
@@ -98,6 +102,10 @@ class IntensityFeature(PascalCaseStrEnum):
     # TODO: Implement if necessary, else delete
     # HISTOGRAM = auto()
 
+
+DefaultIntensityFeature = IntensityFeature
+
+
 # For correlation features in `zfish.features.colocalization`
 class ColocalizationFeature(PascalCaseStrEnum):
     PEARSON_R = auto()
@@ -108,12 +116,14 @@ class ColocalizationFeature(PascalCaseStrEnum):
     MUTUAL_INFO_BINS = auto()
     MUTUAL_INFO_NORMALIZED = auto()
 
+
 # For distance features in `zfish.features.distance`
 class DefaultColocalizationFeature(PascalCaseStrEnum):
     PEARSON_R = auto()
     SPEARMAN_R = auto()
     KENDALL_TAU = auto()
-    
+
+
 class DistanceFeature(PascalCaseStrEnum):
     CENTROID = auto()
     MAXIMUM = auto()

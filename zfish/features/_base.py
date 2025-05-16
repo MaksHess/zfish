@@ -1,4 +1,3 @@
-# %%
 import re
 from typing import Sequence
 
@@ -13,8 +12,8 @@ def get_si_features_df(
     lbl_img: LabelImage,
     int_img: SpatialImage | None = None,
     *,
-    #TODO: Fix this once data stable
-    lbl_dim: str = 'l',
+    # TODO: Fix this once data stable
+    lbl_dim: str = "l",
     props: set[str] | None = None,
     named_features: bool = True,
     object_column: bool = False,
@@ -31,11 +30,15 @@ def get_si_features_df(
             df = df.select(
                 [
                     pl.col("label"),
-                    pl.exclude("label").prefix(f"{int_img.c.item()}_"),
+                    pl.exclude("label").name.prefix(f"{int_img.c.item()}_"),
                 ]
             )
     if object_column:
-        df = df.with_columns([pl.lit(lbl_img[lbl_dim].item()).alias("object"),]).select(
+        df = df.with_columns(
+            [
+                pl.lit(lbl_img[lbl_dim].item()).alias("object"),
+            ]
+        ).select(
             [
                 pl.col(["object", "label"]),
                 pl.exclude(["object", "label"]),
@@ -110,7 +113,7 @@ def _get_df_from_feature_labelmap(
                 pl.Series(prop, data),
             ]
         )
-    return df.select([pl.col("Label").alias('label'), pl.exclude("Label")])
+    return df.select([pl.col("Label").alias("label"), pl.exclude("Label")])
 
 
 def _is_not_itk_transform(prop: str) -> bool:
@@ -170,9 +173,9 @@ def _convert_itk_fixed_array(
     outer_dims: Sequence[str] = ("a", "b", "c"),
     inner_dims: Sequence[str] = ("x", "y", "z"),
 ) -> dict[str, float]:
-    assert isinstance(
-        array, itk.FixedArray
-    ), "`matrix` must be of type `itk.FixedArray`"
+    assert isinstance(array, itk.FixedArray), (
+        "`matrix` must be of type `itk.FixedArray`"
+    )
     columns = {}
     array_np = np.array([tuple(array.GetElement(i)) for i in range(array.Size())])
     for m, dim in zip(array_np, outer_dims):
@@ -180,7 +183,3 @@ def _convert_itk_fixed_array(
         for k in points:
             columns[f"{dim}-{k}"] = points[k]
     return columns
-
-
-
-# %%

@@ -32,13 +32,15 @@ from zfish.features.polars_utils import (
 
 # %% Load features & annotations
 classifier_name = "celltype"
-run_grid_search = True
+run_grid_search = False
 features = sel.label | sel.intensity | sel.density | sel.correlation | sel.distance
 target = "annotation_names"
 
 # input paths
 root_path = Path(r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\classifiers")
-fn_annotations = root_path / "annotations/ann_celltype_clean.parquet" # annotations without debris
+fn_annotations = (
+    root_path / "annotations/ann_celltype_clean.parquet"
+)  # annotations without debris
 fld_features = Path(
     r"C:\Users\hessm\Documents\zfish_local\features_tcorr\Linear(loss='huber', features=['MediumPath', 'EmbryoPath'])"
 )
@@ -80,12 +82,14 @@ if run_grid_search:
 
 # %% Run grid search and plot results
 if run_grid_search:
-
     grid_search = GridSearchCV(pip, params, cv=4, verbose=2)
 
     grid_search.fit(X_train, y_train.to_pandas())
 
-    fig_grid_search = plot_grid_search(grid_search, output_file = out_fn_clf.parent / f"{classifier_name}_plot_GridSearch.html")
+    fig_grid_search = plot_grid_search(
+        grid_search,
+        output_file=out_fn_clf.parent / f"{classifier_name}_plot_GridSearch.html",
+    )
 fig_grid_search
 # %% Select the best estimator, compute scoring metrics, plot feature importance
 if run_grid_search:
@@ -95,6 +99,9 @@ if run_grid_search:
 else:
     clf = load_pipeline(out_fn_clf)
 # %%
+
+plt.style.use({"figure.figsize": (1.8, 1.6), "figure.constrained_layout.use": False, "font.family" : "bahnschrift"})
+
 cm_display = plot_confusion_matrix(
     clf,
     X_test,
@@ -110,8 +117,6 @@ roc_display = plot_roc_curve(
     output_file=out_fn_clf.parent / f"{classifier_name}_plot_RocCurve.png",
 )
 
-# %%
-plot_feature_importance(clf, n_features=30, output_file=out_fn_clf.parent / f"{classifier_name}_plot_FeatureImportance.html")
 
 # %% Apply the classifier on all objects
 celltype_proba = clf.predict_proba(df_nuc_raw)

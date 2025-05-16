@@ -28,7 +28,7 @@ from zfish.features.polars_utils import (
 
 # %% Load features & annotations
 classifier_name = "debris"
-run_grid_search = True
+run_grid_search = False
 features = sel.label | sel.intensity | sel.density | sel.correlation | sel.distance
 target = (
     "is_debris"  # ann0/1: 6 classes,  ann2: 4 classes, ann3: 3 classes, ann4: 2 classes
@@ -145,6 +145,7 @@ else:
 fig_grid_search
 
 # %%
+plt.style.use({"figure.figsize": (1.8, 1.6), "figure.constrained_layout.use": False, "font.family" : "bahnschrift"})
 
 cm_display = plot_confusion_matrix(
     clf,

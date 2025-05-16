@@ -208,7 +208,7 @@ def plot_confusion_matrix(
         clf, X_test, y_test, ax=ax, **c_kwargs
     )
     if output_file is not None:
-        fig.savefig(fname=output_file)
+        fig.savefig(fname=output_file, bbox_inches="tight")
     return disp_confusion
 
 

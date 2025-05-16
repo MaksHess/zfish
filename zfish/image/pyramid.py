@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 if itk.__version__ >= "5.4.0":
     logger.warning(
-        f"Some of the functions in {__name__} don't work in itk 5.4.0, if you get weird results consider donwgrading to 5.3.0"
+        f"Some of the functions in {__name__!r} don't work in itk 5.4.0, if you get weird results consider donwgrading to 5.3.0"
     )
 
 ObjectTypeDim = Literal["l", "o", "c"]

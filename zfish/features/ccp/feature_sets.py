@@ -55,7 +55,7 @@ orientation_feature_patterns = ["^PrincipalAxes.*$", "^EquivalentEllipsoidDiamet
 stage_feature_patterns = ["nucleiRaw3_count", "log2_nuclieRaw3_count", "cycle"]
 
 MINIMAL_CYCLER_FEATURE_NAMES = [
-    "EquivallentSphericalRadius",
+    "EquivalentSphericalRadius",
     "Roundness",
     "FeretDiameter",
     "PCNA.0_Mean",
@@ -84,9 +84,9 @@ CYCLER_LABEL_FEATURES = [
     "Perimeter",
     "EquivalentSphericalPerimeter",
     "EquivalentSphericalRadius",
-    "EquivalentEllipsoidDiameter.a",
-    "EquivalentEllipsoidDiameter.b",
-    "EquivalentEllipsoidDiameter.c",
+    "EquivalentEllipsoidDiameter-a",
+    "EquivalentEllipsoidDiameter-b",
+    "EquivalentEllipsoidDiameter-c",
 ]
 
 CYCLER_INTENSITY_FEATURES = [

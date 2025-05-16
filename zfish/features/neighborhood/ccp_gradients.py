@@ -522,7 +522,18 @@ from zfish.visualize.napari_utils import napari_centroids, napari_gradients
 
 pre_feature = "NormalizedCCP"
 # sort_by = ["cycle", "Ccp__Mean"]
-sort_by = "order"
+# sort_by = "order"
+length_scaler = 0.5
+size_scaler = 0.5
+
+size = (
+    (1 / df_grad_["log2_nuc__Count_corr"])
+    / (1 / df_grad_["log2_nuc__Count_corr"].max())
+    * 15
+    * size_scaler
+)
+
+
 viewer = napari.Viewer()
 viewer.add_points(
     **napari_centroids(
@@ -535,7 +546,7 @@ viewer.add_points(
         # face_colormap=cmaps.ccp.to_mpl(),
         centroid_column="centroid",
         features=cs.by_name("NormalizedCCP"),
-        size=14,
+        size=size,
         # translate_group="roi",
         translate_group=None,
         translate_sort=None,
@@ -553,7 +564,7 @@ viewer.add_points(
         # face_colormap=cmaps.ccp.to_mpl(),
         centroid_column="centroid",
         features=cs.by_name("div"),
-        size=14,
+        size=size,
         # translate_group="roi",
         translate_group=None,
         translate_sort=None,
@@ -623,17 +634,21 @@ viewer.add_points(
 #     # face_contrast_limits=(0, 2 * np.pi),
 # )
 viewer.add_vectors(
-    **napari_gradients(
-        df_grad_.select(cs.starts_with("centroid"), cs.starts_with("grad")),
-        name="grad",
-        length=30,
-        edge_width=4,
-        translate_group=None,
-        edge_color="#030303",
-        # translate_group="roi",
-        # translate_sort=sort_by,
-        # translate_n_rows=n_cols,
-    )
+    **{
+        **napari_gradients(
+            df_grad_.select(cs.starts_with("centroid"), cs.starts_with("grad")),
+            name="grad",
+            length=40,
+            # length=3*size,
+            # edge_width=(size/3).to_frame().to_numpy(),
+            edge_width=4,
+            translate_group=None,
+            # translate_group="roi",
+            # translate_sort=sort_by,
+            # translate_n_rows=n_cols,
+        ),
+        **{"edge_color": "#DDDDDDFF", "features": None},
+    }
 )
 
 # %%
@@ -646,6 +661,7 @@ from zfish.visualize.pyvista_utils import (
 )
 
 # %%
+
 rois = [
     "B02_px+0198_py-2152",
     "F05_px-0015_py-1358",
@@ -660,21 +676,44 @@ subplots = [
     (1, 1),
 ]
 
+size_scale_stat = 2.5
+size_scale = 1.5
+
+n_lines_stat = 2000
+
 sizes = [
     12,
     10,
     8,
     6,
 ]
+default_cpos = [
+    (-1302.5324833545992, 482.93383621972845, 50.71494986009872),
+    (114.42073220492563, 342.67707889727745, 345.55821403064544),
+    (-0.12186830802510701, -0.985650006753266, 0.11679974180786815),
+]
 pv.global_theme.font.family = "arial"
-po = pv.Plotter(
+po_stat = pv.Plotter(
     line_smoothing=True,
     point_smoothing=True,
     polygon_smoothing=True,
     shape=(2, 2),
     window_size=(800, 800),
+    image_scale=4,
+    off_screen=True,
 )
-po.parallel_projection = True
+po_dyn = pv.Plotter(
+    line_smoothing=True,
+    point_smoothing=True,
+    polygon_smoothing=True,
+    shape=(2, 2),
+    window_size=(800, 800),
+    image_scale=4,
+    off_screen=False,
+)
+
+po_stat.parallel_projection = True
+po_dyn.parallel_projection = True
 
 
 for i, roi in enumerate(rois):
@@ -686,12 +725,16 @@ for i, roi in enumerate(rois):
         .filter(pl.col("roi") == roi)
     )
 
-    po.subplot(*subplots[i])
-    comps, p = stream_plot(
+    po_stat.subplot(*subplots[i])
+    po_dyn.subplot(*subplots[i])
+
+    # po.reset_camera(clipping_range=True)  # Optional, to fix clipping
+    comps, p_stat = stream_plot(
         df_one,
         points=True,
-        stream_source_n_points=500,
-        point_size=sizes[i],
+        # stream_source_n_points=500,
+        stream_source_n_points=n_lines_stat,
+        point_size=sizes[i] * size_scale_stat,
         convex_hull=False,
         vector_scale="log_norm",
         centroid_columns=("nuc_Centroid-z", "nuc_Centroid-y", "nuc_Centroid-x"),
@@ -702,21 +745,79 @@ for i, roi in enumerate(rois):
         stream_hue=None,
         stream_opacity=0.3,
         # stream_hue_norm=(-400, 400),
-        stream_render_lines_as_tubes=True,
-        stream_line_width=4,
+        stream_render_lines_as_tubes=False,
+        stream_line_width=3,
         return_components=True,
         stream=True,
         quiver_points=False,
-        po=po,
+        po=po_stat,
     )
+    comps, p_dyn = stream_plot(
+        df_one,
+        points=True,
+        # stream_source_n_points=500,
+        stream_source_n_points=1000,
+        point_size=sizes[i] * size_scale,
+        convex_hull=False,
+        vector_scale="log_norm",
+        centroid_columns=("nuc_Centroid-z", "nuc_Centroid-y", "nuc_Centroid-x"),
+        vector_components=("grad.z", "grad.y", "grad.x"),
+        point_hue="NormalizedCCP",
+        # point_hue_norm=(0, 2*np.pi),
+        # stream_hue="IntegrationTime",
+        stream_hue=None,
+        stream_opacity=0.3,
+        # stream_hue_norm=(-400, 400),
+        stream_render_lines_as_tubes=False,
+        stream_line_width=3,
+        return_components=True,
+        stream=True,
+        quiver_points=False,
+        po=po_dyn,
+    )
+    for po in [po_stat, po_dyn]:
+        po.camera_position = [
+            (-1188.8848612793934, 468.43133859485954, 54.90920175263625),
+            (109.05490893125534, 339.9550971984863, 324.98784255981445),
+            (-0.12186830802510701, -0.985650006753266, 0.11679974180786815),
+        ]
+        po.camera_set = True  # prevent auto-reset of camera
 
-po.link_views()
-po.export_html(
+for po in [po_stat, po_dyn]:
+    po.link_views()
+
+zoom_factor = 1.3
+po_stat.reset_camera()
+po_stat.camera.zoom(zoom_factor)
+# for i in range(len(rois)):
+#     po.subplot(*subplots[i])
+#     po.camera.zoom(zoom_factor)
+
+
+out_cpos = po_stat.show(
+    return_cpos=True,
+)
+po_stat.screenshot(
+    r"C:\Users\hessm\Documents\Programming\Python\thesis\Figures\Plots\ccp_gradient_stream_8-11_static.png"
+)
+
+
+po_dyn.export_html(
     r"C:\Users\hessm\Documents\Programming\Python\thesis\Figures\Plots\ccp_gradient_stream_8-11.html"
 )
-po.show()
 # %%
-po.subplot(0, 1)
+
+# %%
+po = pv.Plotter(
+    line_smoothing=True,
+    point_smoothing=True,
+    polygon_smoothing=True,
+    # shape=(2, 2),
+    window_size=(800, 800),
+    image_scale=4,
+)
+po.parallel_projection = True
+# po.subplot(0, 1)
 comps, p = stream_plot(
     df_one,
     points=True,
@@ -728,7 +829,8 @@ comps, p = stream_plot(
     vector_components=("grad.z", "grad.y", "grad.x"),
     point_hue="NormalizedCCP",
     # point_hue_norm=(0, 2*np.pi),
-    stream_hue="IntegrationTime",
+    # stream_hue="IntegrationTime",
+    stream_hue=None,
     # stream_hue_norm=(-400, 400),
     stream_render_lines_as_tubes=True,
     stream_line_width=4,
@@ -745,7 +847,7 @@ po.link_views()
 # )
 # p.parallel_projection = True
 # p.show()
-po.show()
+po.show(cpos=default_cpos)
 
 # %%
 

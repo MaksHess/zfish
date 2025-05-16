@@ -9,60 +9,24 @@ import numpy as np
 import xarray as xr
 from numpy.typing import ArrayLike
 
+from zfish.commons.types_ import RasterMeta
+
 # from zfish.abbott_legacy.conversions import to_itk
 from zfish.features.types import LabelImage, SpatialImage
-from zfish.image.h5_io import to_si
+from zfish.image.conversions import to_si
 
 if TYPE_CHECKING:
     from zfish.features.types import LabelImage, SpatialImage
 
+logger = logging.getLogger(__name__)
+
 if itk.__version__ >= "5.4.0":
-    logging.logger.warn(
-        "Some of those functions don't work in itk 5.4.0, if you get weird results consider donwgrading to 5.3.0"
+    logger.warning(
+        f"Some of the functions in {__name__} don't work in itk 5.4.0, if you get weird results consider donwgrading to 5.3.0"
     )
 
 ObjectTypeDim = Literal["l", "o", "c"]
 ITK_ORDER = ("x", "y", "z")
-
-import enum
-
-
-class Sentinel(enum.Enum):
-    MISSING = enum.auto()
-
-
-MISSING = Sentinel.MISSING
-
-
-@dataclass(frozen=True, slots=True)
-class RasterMeta:
-    name: str
-    type_: Literal["image", "label", "mask"]
-    dims: tuple[Literal["x", "y", "z"], ...]
-    scale: tuple[float, ...]
-    level: int
-    origin: tuple[float, ...]
-    path: str | Sentinel
-
-    def from_template(
-        self,
-        name=None,
-        path=MISSING,
-        type_=None,
-        origin=None,
-        scale=None,
-        dims=None,
-        level=None,
-    ):
-        return RasterMeta(
-            name=self.name if name is None else name,
-            type_=self.type_ if type_ is None else type_,
-            dims=self.dims if dims is None else dims,
-            scale=self.scale if scale is None else scale,
-            level=self.level if level is None else level,
-            origin=self.origin if origin is None else origin,
-            path=self.path if path is MISSING else path,
-        )
 
 
 def lazy_resample_dask_label(
@@ -114,7 +78,11 @@ def _lazy_resample_dask_label(
     # (after calling compute it's correct).
     out_slice = tuple(slice(0, sz) for sz in out_shape)
     out_image = image.map_blocks(
-        resample_dask_label, scale_factors, return_itk_view, chunks=out_chunksize
+        resample_dask_label,
+        scale_factors,
+        return_itk_view,
+        chunks=out_chunksize,
+        dtype=np.uint16,
     )[out_slice]
 
     return out_image

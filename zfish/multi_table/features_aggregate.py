@@ -1,14 +1,23 @@
 # %%
+import re
 from functools import reduce
 from operator import or_
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 import polars as pl
 import polars.selectors as cs
+from polars._typing import SelectorType
 
 from zfish.multi_table.object_hierarchy import compute_cardinality_hierarchy
-from zfish.multi_table.schemas import CHILD_IDX, LABEL_OBJECT_IDX, PARENT_IDX, sel
-from zfish.multi_table.tables_io import join, read_resources_and_features, to_wide
+from zfish.multi_table.schemas_v2 import CHILD_IDX, LABEL_OBJECT_IDX, PARENT_IDX, sel
+from zfish.multi_table.table_base_mixin import join, safe_shape
+from zfish.multi_table.tables_io import (
+    read_resources_and_features,
+    safe_lazy,
+    to_wide,
+)
+from zfish.polars.column_nesting import nest, unnest
+from zfish.preprocessing.types import AnyFrame
 
 if TYPE_CHECKING:
     from polars.type_aliases import SelectorType
@@ -18,7 +27,7 @@ if TYPE_CHECKING:
 
 pl.enable_string_cache()
 
-RENAME_MAP = {"idx.o.parent": "idx.o", "idx.label.parent": "idx.label"}
+RENAME_MAP = {"o.parent": "o", "label.parent": "label"}
 
 # Aggregation: TypeAlias = Literal["Count", "Mean", "Max", "Min", "Quantile"]
 
@@ -31,7 +40,7 @@ def _to_selector(maybe_selector: "IntoSelectorType"):
 
 
 def Count():
-    return pl.len().alias("Count")
+    return pl.len().alias("_Count")
 
 
 def Mean(x: "IntoSelectorType" = (~sel.idx)):
@@ -58,63 +67,49 @@ def Quantile(q: float, x: "IntoSelectorType" = (~sel.idx)):
     return _to_selector(x).quantile(q).name.suffix(f"__Q({q:.2f})")
 
 
-# ALLOWED_AGGREGATIONS: dict[tuple[Aggregation, ...], list[str]] = {
-#     ("Count",): [],
-#     ("Mean", "Max", "Min", "Quantile"): [
-#         # label
-#         "PhysicalSize",
-#         "Elongation",
-#         "Flatness",
-#         "Roundness",
-#         "FeretDiameter",
-#         "Perimeter",
-#         "EquivalentSphericalPerimeter",
-#         "EquivalentSphericalRadius",
-#         "PerimeterOnBorder",
-#         "PerimeterOnBorderRatio",
-#         # intensity
-#         "Mean",
-#         "Median",
-#         "Minimum",
-#         "Maximum",
-#         "Sum",
-#         "Variance",
-#         "StandardDeviation",
-#         "Skewness",
-#         "Kurtosis",
-#         "WeightedElongation",
-#         "WeightedFlatness",
-#         # correlation
-#         "PearsonR",
-#         "SpearmanR",
-#         "KendallTau",
-#         # density_count
-#         "Count",
-#         # density_distance
-#         "Max",
-#         "Mean",
-#         # distance
-#         "Centroid",
-#         "Maximum",
-#         "Minimum",
-#     ],
-# }
+def split_tables_by_factor(tbls, factor="idx.o"):
+    return tbls.pipe_tables(lambda x: x.select(pl.col(factor).unique()))
 
 
-# def _get_allowed_features_selector(agg_func):
-#     all_allowed = []
-#     for k, v in ALLOWED_AGGREGATIONS.items():
-#         if agg_func in k:
-#             all_allowed.extend(v)
-#     if len(all_allowed) == 0:
-#         sel.empty
-#     return reduce(or_, [cs.matches(f"^{e}$") for e in set(all_allowed)])
+def select_singleton_dims(
+    df: pl.DataFrame,
+    column_selector: SelectorType = cs.by_dtype(
+        pl.UInt8, pl.UInt16, pl.UInt32, pl.String, pl.Categorical
+    ),
+    # column_selector=cs.starts_with('idx.')
+) -> pl.DataFrame:
+    columns = cs.expand_selector(df, column_selector)
+    # print(columns)
+    return (
+        df.select(pl.col(columns).unique().len() == 1)
+        .transpose(include_header=True, column_names=("is_singleton",))
+        .filter(pl.col("is_singleton"))
+    )
+
+
+def squeeze_singleton_dims(
+    df: pl.DataFrame,
+    column_selector: SelectorType = sel.idx,
+):
+    return df.pipe(select_singleton_dims, column_selector=column_selector)
+
+
+def is_singleton(expr: pl.Expr) -> pl.Expr:
+    return expr.unique().len() == 1
+
+
+def is_full_rank(expr: pl.Expr) -> pl.Expr:
+    return expr.unique().len() == expr.len()
+
+
+def safe_rename(df, rename_map=RENAME_MAP):
+    return df.rename({k: v for k, v in rename_map.items() if k in df})
 
 
 def aggregate(
-    df_hierarchy: pl.DataFrame,
-    df_object_types: pl.DataFrame,
-    df_features: pl.DataFrame,
+    df_hierarchy: AnyFrame,
+    df_object_types: AnyFrame,
+    df_features: AnyFrame,
     aggregation: pl.Expr | tuple[pl.Expr, ...] = Count(),
     aggregate_to: str = "embryoRaw",
     aggregate_from: tuple[str, ...] | None = None,
@@ -122,10 +117,14 @@ def aggregate(
     group_by=(
         sel.parent | sel.object_type
     ),  # Valid for wide tables i. e. indexed like label_objects (o, roi, label)
-):
+) -> pl.DataFrame:
+    df_hierarchy = safe_lazy(df_hierarchy)
+    df_object_types = safe_lazy(df_object_types)
+    df_features = safe_lazy(df_features)
+
     df_cardinality = (
         compute_cardinality_hierarchy(df_hierarchy, df_object_types)
-        .select("idx.o", "parents", "cardinality")
+        .select("o", "parents", "cardinality")
         .explode("parents", "cardinality")
     )
 
@@ -133,23 +132,19 @@ def aggregate(
         [
             df_cardinality.filter(pl.col("parents") == aggregate_to),
             pl.DataFrame(
-                {"idx.o": aggregate_to, "parents": aggregate_to, "cardinality": "1:1"},
-                schema=df_cardinality.schema,
-            ),
+                {"o": aggregate_to, "parents": aggregate_to, "cardinality": "1:1"},
+                schema=df_cardinality.collect_schema(),
+            ).lazy(),
         ]
     )
     dfs_agg = []
     # print(df_cardinality_self)
-    for cardinality, df_o in df_cardinality_self.group_by(
+    for cardinality, df_o in df_cardinality_self.collect().group_by(
         ("cardinality",), maintain_order=True
     ):
         if aggregate_from is None:
-            aggregate_from_group = tuple(df_o["idx.o"].to_list())
+            aggregate_from_group = tuple(df_o["o"].to_list())
         if cardinality[0] == "m:1":
-            # continue
-            # df_hierarchy_group = df_hierarchy.filter(
-            #     pl.col("idx.o.child").is_in(df_o["idx.o"])
-            # )
             df_agg_m1 = aggregate_many_to_one(
                 df_hierarchy,
                 df_features,
@@ -158,13 +153,9 @@ def aggregate(
                 aggregate_from=aggregate_from_group,
                 drop_background_label=drop_background_label,
                 group_by=group_by,
-            ).pipe(to_wide, sep="__")
+            ).pipe(to_wide, sep="_")
             dfs_agg.append(df_agg_m1)
         elif cardinality[0] == "1:1":
-            # df_hierarchy_group = df_hierarchy.pipe(_add_self_hierarchy).filter(
-            #     pl.col("idx.o.child").is_in(df_o["idx.o"])
-            # )
-            # return df_hierarchy_group, df_features, aggregate_to, df_cardinality_self
             df_agg_11 = aggregate_one_to_one(
                 df_hierarchy,
                 df_features,
@@ -173,7 +164,7 @@ def aggregate(
                 drop_background_label=drop_background_label,
             )
             # return df_agg_11
-            dfs_agg.append(df_agg_11.pipe(to_wide, sep="_"))
+            dfs_agg.append(df_agg_11.collect().pipe(to_wide, sep="_"))
         else:
             raise ValueError(f"Unknown cardinality: {cardinality[0]}")
     # return dfs_agg
@@ -188,14 +179,19 @@ def aggregate_many_to_one(
     aggregate_from: tuple[str, ...] | None = ("cells", "nucleiRaw3"),
     drop_background_label=True,
     group_by=(
-        sel.idx - cs.by_name("idx.label.child")
+        sel.idx - cs.by_name("label.child")
     ),  # Valid for wide tables i. e. indexed like label_objects (o, roi, label)
 ) -> pl.DataFrame:
     if aggregate_from is None:
-        aggregate_from = tuple(df_hierarchy["idx.o.child"].unique().to_list())
+        aggregate_from = tuple(
+            df_hierarchy.select(pl.col("o.child").unique()).collect()
+        )
 
-    df_agg = df_hierarchy.filter((pl.col(PARENT_IDX[0]) == aggregate_to)).filter(
-        pl.col("idx.o.child").is_in(aggregate_from)
+    df_agg = (
+        df_hierarchy.filter((pl.col(PARENT_IDX[1]) == aggregate_to)).filter(
+            pl.col("o.child").is_in(aggregate_from)
+        )
+        # .pipe(debug)
     )
     if drop_background_label:
         df_agg = df_agg.filter(pl.col(PARENT_IDX[2]) != 0)
@@ -205,7 +201,7 @@ def aggregate_many_to_one(
             df_features.lazy(),
             how="inner",
             left_on=CHILD_IDX,
-            right_on=["idx.o", "idx.roi", "idx.label"],
+            right_on=["roi", "o", "label"],
         )
         .group_by(group_by)
         .agg(aggregation)
@@ -225,22 +221,22 @@ def aggregate_one_to_one(
 ):
     """'aggregate' 1:1 (i. e. copy features and prepend the child structure to the feature name)."""
     if aggregate_from is None:
-        aggregate_from = tuple(df_hierarchy["idx.o.child"].unique().to_list())
+        aggregate_from = tuple(df_hierarchy["o.child"].unique().to_list())
     if aggregate_to in aggregate_from:
         df_hierarchy = df_hierarchy.pipe(_add_self_hierarchy)
     df_agg = (
-        df_hierarchy.filter(pl.col("idx.o.parent") == aggregate_to)
-        .filter(pl.col("idx.o.child").is_in(aggregate_from))
+        df_hierarchy.filter(pl.col("o.parent") == aggregate_to)
+        .filter(pl.col("o.child").is_in(aggregate_from))
         .join(
             df_features,
-            left_on=("idx.roi", "idx.o.child", "idx.label.child"),
-            right_on=("idx.roi", "idx.o", "idx.label"),
+            left_on=("roi", "o.child", "label.child"),
+            right_on=("roi", "o", "label"),
         )
-        .drop("idx.label.child")
+        .drop("label.child")
         .rename(RENAME_MAP)
     )
     if drop_background_label:
-        df_agg = df_agg.filter(pl.col("idx.label") != 0)
+        df_agg = df_agg.filter(pl.col("label") != 0)
     return df_agg
 
 
@@ -252,75 +248,165 @@ def _add_self_hierarchy(df_hierarchy: pl.DataFrame, include_children_as_parents=
                 df_hierarchy,
                 pl.concat(
                     [
-                        df_hierarchy.select(
-                            ["idx.roi", "idx.o.parent", "idx.label.parent"]
-                        ),
+                        df_hierarchy.select(PARENT_IDX),
                         df_hierarchy.select(
                             [
-                                "idx.roi",
-                                pl.col("idx.o.child").alias("idx.o.parent"),
-                                pl.col("idx.label.child").alias("idx.label.parent"),
+                                "roi",
+                                pl.col("o.child").alias("o.parent"),
+                                pl.col("label.child").alias("label.parent"),
                             ]
                         ),
                     ]
                 )
-                .unique(["idx.roi", "idx.o.parent", "idx.label.parent"])
+                .unique(PARENT_IDX)
                 .with_columns(
-                    pl.col("idx.o.parent").alias("idx.o.child"),
-                    pl.col("idx.label.parent").alias("idx.label.child"),
+                    pl.col("o.parent").alias("o.child"),
+                    pl.col("label.parent").alias("label.child"),
                 ),
             ]
         )
     return pl.concat(
         [
             df_hierarchy,
-            df_hierarchy.select(["idx.roi", "idx.o.parent", "idx.label.parent"])
-            .unique(["idx.roi", "idx.o.parent", "idx.label.parent"])
+            df_hierarchy.select(PARENT_IDX)
+            .unique(PARENT_IDX)
             .with_columns(
-                pl.col("idx.o.parent").alias("idx.o.child"),
-                pl.col("idx.label.parent").alias("idx.label.child"),
+                pl.col("o.parent").alias("o.child"),
+                pl.col("label.parent").alias("label.child"),
             ),
         ]
     )
 
 
+def subtract_background(f, r, o="nucleiRaw3", o_bg="cyto", channels=None, clip=1):
+    FEATURES = ["Mean", "Sum"]
+
+    channel_filter = pl.lit(True) if channels is None else pl.col("c").is_in(channels)
+    df = r.label_objects.filter(pl.col("o") == o).select(sel.idx)
+
+    df = join(
+        df,
+        (
+            f.intensity.filter(pl.col("o") == o)
+            .filter(channel_filter)
+            .select(sel.idx, cs.by_name(FEATURES))
+        ).collect(),
+        (
+            f.intensity.filter(pl.col("o") == o_bg)
+            .filter(channel_filter)
+            .select(sel.idx, cs.by_name(FEATURES).name.suffix("_bg"))
+            .drop("o")
+        ).collect(),
+        (f.label.filter(pl.col("o") == o).select(sel.idx, "PhysicalSize")).collect(),
+        how="left",
+    )
+    return (
+        df.with_columns(
+            (pl.col("Mean") - pl.col("Mean_bg").fill_null(0.0)).clip(lower_bound=clip),
+            pl.col("Mean").alias("Mean_wbg"),
+            pl.col("Sum").alias("Sum_wbg"),
+        )
+        .with_columns((pl.col("Mean") * pl.col("PhysicalSize")).alias("Sum"))
+        .drop("PhysicalSize")
+    )
+
+
+def test_aggregate_many_to_one():
+    import pandera.polars as pa
+
+    df_hierarchy = pl.DataFrame(
+        {
+            "roi": ["site0"] * 10 + ["site1"] * 10 + ["site0"] * 5 + ["site1"] * 5,
+            "o.parent": ["emb"] * 20 + ["cell"] * 10,
+            "label.parent": [1] * 20 + (list(range(5))) * 2,
+            "o.child": (["cell"] * 5 + ["nuc"] * 5) * 2 + ["nuc"] * 10,
+            "label.child": list(range(5)) * 6,
+        },
+        schema={
+            "roi": pl.Categorical,
+            "o.parent": pl.Categorical,
+            "label.parent": pl.UInt32,
+            "o.child": pl.Categorical,
+            "label.child": pl.UInt32,
+        },
+    )
+    df_o = pl.DataFrame(
+        {
+            "o": ["emb", "cell", "nuc"],
+            "parents": [[], ["emb"], ["emb"]],
+            "hierarchy_level": [0, 1, 2],
+        },
+        schema={
+            "o": pl.Categorical,
+            "parents": pl.List(pl.Categorical),
+            "hierarchy_level": pl.UInt8,
+        },
+    )
+    df_feat = None
+    df_feat = pl.DataFrame(
+        {
+            "roi": ["site0"] * 5 + ["site1"] * 5 + ["site0"] * 5 + ["site1"] * 5,
+            "o": ["cell"] * 10 + ["nuc"] * 10,
+            "label": list(range(5)) * 4,
+            "f": [0.5] * 10 + [1.5] * 10,
+        },
+        schema={
+            "roi": pl.Categorical,
+            "o": pl.Categorical,
+            "label": pl.UInt32,
+            "f": pl.Float64,
+        },
+    )
+
+    AGG_TO = "emb"
+    AGG_FROM = ("cell", "nuc")
+    df_agg = aggregate_many_to_one(
+        df_hierarchy,
+        df_feat,
+        aggregate_from=AGG_FROM,
+        aggregate_to=AGG_TO,
+        aggregation=(Count(), Mean("f"), Sum("f")),
+    )
+
+    result_schema = pa.DataFrameSchema(
+        {
+            "roi": pa.Column(pl.Categorical, checks=pa.Check.isin(["site0", "site1"])),
+            "o": pa.Column(pl.Categorical, checks=pa.Check.isin([AGG_TO])),
+            "label": pa.Column(pl.UInt32, checks=pa.Check.isin([1])),
+            "o.child": pa.Column(pl.Categorical, checks=pa.Check.isin(list(AGG_FROM))),
+            "_Count": pa.Column(pl.UInt32, checks=pa.Check.eq(5)),
+            "f__Mean": pa.Column(float, checks=pa.Check.isin([0.5, 1.5])),
+            "f__Sum": pa.Column(float, checks=pa.Check.isin([2.5, 7.5])),
+        }
+    )
+    df_agg.pipe(result_schema.validate)
+
+    # automatically converts to wide format
+    df_agg2 = aggregate(
+        df_hierarchy, df_o, df_feat, (Count(), Sum("f"), Mean("f")), aggregate_to="emb"
+    )
+
+    result_schema2 = pa.DataFrameSchema(
+        {
+            "roi": pa.Column(pl.Categorical, checks=pa.Check.isin(["site0", "site1"])),
+            "o": pa.Column(pl.Categorical, checks=pa.Check.isin([AGG_TO])),
+            "label": pa.Column(pl.UInt32, checks=pa.Check.isin([1])),
+            "nuc__Count": pa.Column(pl.UInt32, checks=pa.Check.eq(5)),
+            "nuc_f__Mean": pa.Column(float, checks=pa.Check.isin([1.5])),
+            "nuc_f__Sum": pa.Column(float, checks=pa.Check.isin([7.5])),
+            "cell__Count": pa.Column(pl.UInt32, checks=pa.Check.eq(5)),
+            "cell_f__Mean": pa.Column(float, checks=pa.Check.isin([0.5])),
+            "cell_f__Sum": pa.Column(float, checks=pa.Check.isin([2.5])),
+        }
+    )
+    df_agg2.pipe(result_schema2.validate)
+
+    return df_agg2
+
+
 # %%
-def example():
-    r, f = read_resources_and_features()
-    rw = r.pipe_tables(to_wide, exclude_tables=("hierarchy",))
 
-    df_images = rw.images
-    df_label_images = rw.label_images
-    df_label_objects = rw.label_objects
-
-    df_cardinality = compute_cardinality_hierarchy(r.hierarchy, r.object_types)
-
-    df_hierarchy_m1 = (
-        r.hierarchy.join(
-            df_cardinality.explode("parents", "cardinality")
-            .filter(pl.col("cardinality").is_not_null())
-            .select("parents", "idx.o", "cardinality"),
-            left_on=["idx.o.parent", "idx.o.child"],
-            right_on=["parents", "idx.o"],
-            how="full",
-            coalesce=True,
-        )
-        .filter(pl.col("cardinality") == "m:1")
-        .filter(pl.col("idx.label.parent") != 0)
-    )
-    df_hierarchy_11 = (
-        r.hierarchy.join(
-            df_cardinality.explode("parents", "cardinality")
-            .filter(pl.col("cardinality").is_not_null())
-            .select("parents", "idx.o", "cardinality"),
-            left_on=["idx.o.parent", "idx.o.child"],
-            right_on=["parents", "idx.o"],
-            how="full",
-            coalesce=True,
-        )
-        .filter(pl.col("cardinality") == "1:1")
-        .filter(pl.col("idx.label.parent") != 0)
-    )
+# test_aggregate_many_to_one().pipe(to_wide)
 
 
 # def cardinality_11_aggregation_expr() -> pl.Expr:

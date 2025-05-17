@@ -13,7 +13,7 @@ Well = namedtuple("Well", ["r", "c"])
 Position = namedtuple("Position", ["x", "y"])
 
 
-def parse_acquisition_timestamps_with_rewells(flds: list[str]) -> dict[dict[list]]:
+def parse_acquisition_timestamps_with_rewells(flds: list[str]) -> dict[str, dict[str, list]]:
     """
     Parse multiple CV8K folders by passing them as a list. Sites are matched based on their well and coordinates.
     If a well was imaged multiple times the last folder in `flds` is used."""
@@ -23,8 +23,8 @@ def parse_acquisition_timestamps_with_rewells(flds: list[str]) -> dict[dict[list
     return all_sites
 
 
-def parse_acquisition_timestamps(fld: str) -> dict[dict[tuple]]:
-    fld = Path(fld)
+def parse_acquisition_timestamps(fld: str) -> dict[str, dict[str, tuple]]:
+    fld: Path = Path(fld)
     tree = ET.parse(fld / MEASUREMENT_DATA_FILE)
     root = tree.getroot()
     sites = defaultdict(lambda: defaultdict(tuple))

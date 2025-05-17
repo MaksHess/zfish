@@ -7,10 +7,9 @@ from typing import Any, TypedDict, TypeVar
 
 import polars as pl
 import polars.selectors as cs
-from polars.type_aliases import SelectorType
 
 from zfish.analysis.hierarchy_aggregate import hierarchy_aggregate_count
-from zfish.preprocessing.types import AnyFrameT
+from zfish.preprocessing.types import AnyFrame, AnyFrameT, SelectorType
 
 logger = logging.getLogger(__name__)
 
@@ -32,22 +31,23 @@ META_COLUMNS = reduce(
         ]
     ],
 )
-CONTROL_WELLS = ['B07', 'C07', 'D07', 'E07']
+CONTROL_WELLS = ["B07", "C07", "D07", "E07"]
+
 
 def add_pooled_cycle(df: pl.DataFrame) -> pl.DataFrame:
-    return (
-    df.with_columns(
+    return df.with_columns(
         pl.col("cycle")
         .cut([9.5, 10.5, 11.5], labels=["7-8-9", "10", "11", "12"])
         .alias("cycle_pooled_name")
         .cast(pl.Utf8)
-    )
-    .with_columns(
+    ).with_columns(
         pl.col("cycle_pooled_name")
-        .map_dict({"7-8-9": 9, "10": 10, "11": 11, "12": 12})
+        .replace_strict(
+            {"7-8-9": 9, "10": 10, "11": 11, "12": 12}, return_dtype=pl.Utf8
+        )
         .alias("cycle_pooled")
     )
-    )  
+
 
 def get_metadata(
     df: AnyFrameT,
@@ -60,7 +60,9 @@ def get_metadata(
     df_sub = df.filter(object_column.is_in(objects_to_count))
     df_meta = (
         hierarchy_aggregate_count(df_sub, parent_selector, object_column=object_column)
-        .with_columns(cs.matches("_Count").log(base=2).cast(pl.Float32).prefix("log2_"))
+        .with_columns(
+            cs.matches("_Count").log(base=2).cast(pl.Float32).name.prefix("log2_")
+        )
         .with_columns(
             cs.matches("log2_nuc.*_Count").round(0).cast(pl.UInt16).alias("cycle")
         )
@@ -91,7 +93,10 @@ def get_metadata(
             [
                 pl.col("well").is_in(control_wells).alias("is_control_well"),
                 pl.col("well")
-                .apply(lambda x: control_wells.index(x) if x in control_wells else 1000)
+                .map_elements(
+                    lambda x: control_wells.index(x) if x in control_wells else 1000,
+                    return_dtype=pl.UInt16,
+                )
                 .alias("control_well_for_acquisition"),
             ]
         )

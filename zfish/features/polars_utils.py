@@ -23,12 +23,15 @@ from toolz.dicttoolz import valmap
 from typing_extensions import deprecated
 
 from zfish.features.polars_selector import sel as _sel
+from zfish.multi_table.schemas_v2 import sel
 from zfish.preprocessing.types import AnyFrameT, FrameOrLazy
 
 if TYPE_CHECKING:
     from polars import Expr
     from polars.polars import PyExpr
     from polars.type_aliases import IntoExpr, IntoExprColumn
+
+IDX_SEL = cs.starts_with("f?idx.")
 
 POLARS_CONFIG_FILE = (
     r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\features\polars.json"
@@ -116,6 +119,8 @@ BOUNDING_BOX_COLUMNS = [
 
 DEBUG = True
 
+SEP_NESTING_ORDER = [".", "-", "_"]  # low to high prio -> '.' at idx 0
+
 
 # def log(df: pl.DataFrame, message: str | None = None) -> pl.DataFrame:
 #     if message is not None:
@@ -188,7 +193,7 @@ def read_table(
             pl.lit(fn.parent.name).alias("roi"), pl.lit(fn.stem).alias("object")
         )
         tables.append(table)
-    return pl.concat(tables, how="diagonal").select(sel.index, ~sel.index)
+    return pl.concat(tables, how="diagonal").select(IDX_SEL, ~IDX_SEL)
 
 
 # NOT PERFORMANT WITH SMALL FRAGMENTED TABLES!
@@ -327,7 +332,7 @@ def _get_table_for_column_nesting(
         PATTERN = rf"(?:{ignore_pattern})?([^\n{SEP}]+)?([{SEP}])?"
         # PATTERN = rf"(?:{ignore_pattern})?([^\n({SEP})]+)?([({SEP})])?"
         column_components = (
-            pl.Series("columns", df.columns)
+            pl.Series("columns", df.collect_schema().names())
             .to_frame()
             .with_columns(
                 pl.col("columns").str.extract_all(PATTERN).alias("components")
@@ -403,11 +408,88 @@ def _get_table_for_column_nesting(
         )
         .agg(pl.col("components_with_sep"))
         .with_columns(pl.col("components_with_sep").list.join(""))
-        # .filter(~pl.col('is_separator') if separator_in_name == 'drop' else True)
+        .filter(~pl.col("is_separator") if separator_in_name == "drop" else True)
         # .group_by('index', 'columns', 'level', maintain_order=True).agg(pl.col('components_with_sep')).with_columns(pl.col('components_with_sep').list.join(''))
         # .pipe(debug)
     )
     return long_table
+
+
+level = 0
+
+
+def _nest_selector_global(
+    df,
+    to_level=0,
+    method=NestingStrategy.SPLIT,
+    ignore_pattern=r".*_[A-Z]",
+    allow_singleton_nesting=False,
+    column_selector=~sel.idx,
+    sep_nesting_order=SEP_NESTING_ORDER,
+):
+    columns_to_nest = cs.expand_selector(df, column_selector)
+    columns_to_ignore = cs.expand_selector(df, ~column_selector)
+    # return columns_to_nest, columns_to_ignore
+    # columns_to_nest_index = [df.get_column_index(c) for c in columns_to_nest]
+    # columns_to_ignore_index = [df.get_column_index(c) for c in columns_to_ignore]
+    columns_to_nest_index = [
+        df.collect_schema().names().index(c) for c in columns_to_nest
+    ]
+    columns_to_ignore_index = [
+        df.collect_schema().names().index(c) for c in columns_to_ignore
+    ]
+    # return columns_to_nest_index, columns_to_ignore_index
+    separator_in_name = "drop"
+    sep = sep_nesting_order[to_level - 1]
+    long_table = (
+        _get_table_for_column_nesting(
+            df,
+            sep=sep,
+            to_level=to_level,
+            ignore_pattern=ignore_pattern,
+            separator_in_name=separator_in_name,
+        )
+        # .pipe(debug, 'long_table')
+        .filter(pl.col("index").is_in(columns_to_nest_index))
+    )
+    wide_table = long_table.pivot(
+        index=["index", "columns"],
+        values="components_with_sep",
+        on=["level", "is_separator"],
+    )  # .pipe(debug, "wide_table")
+    max_level = long_table["level"].max()
+    if max_level == 0:
+        return df
+
+    res = []
+    for group_name, index, old_cols, new_cols in (
+        wide_table.group_by("{0,false}")
+        .agg(pl.all())
+        .with_columns(pl.col("index").list.get(0))
+        .sort("index")
+        .rows()
+    ):
+        if new_cols == [None]:
+            new_cols = old_cols
+        res.append(
+            pl.struct([pl.col(e).alias(n) for e, n in zip(old_cols, new_cols)]).alias(
+                group_name
+            )
+        )
+
+    return df.select(*res)
+
+
+def nest_global(df, to_level=2, column_selector=~sel.idx):
+    print(column_selector)
+    print(df)
+    print(to_level)
+    for i in range(1, to_level + 1):
+        df = df.select(
+            ~column_selector,
+            *_nest_selector_global(df, to_level=i, column_selector=column_selector)
+        )
+    return df
 
 
 def nest_selector(
@@ -425,8 +507,12 @@ def nest_selector(
 
     # columns_to_nest_index = [df.get_column_index(c) for c in columns_to_nest]
     # columns_to_ignore_index = [df.get_column_index(c) for c in columns_to_ignore]
-    columns_to_nest_index = [df.columns.index(c) for c in columns_to_nest]
-    columns_to_ignore_index = [df.columns.index(c) for c in columns_to_ignore]
+    columns_to_nest_index = [
+        df.collect_schema().names().index(c) for c in columns_to_nest
+    ]
+    columns_to_ignore_index = [
+        df.collect_schema().names().index(c) for c in columns_to_ignore
+    ]
 
     long_table = (
         _get_table_for_column_nesting(
@@ -442,7 +528,7 @@ def nest_selector(
     wide_table = long_table.pivot(
         index=["index", "columns"],
         values="components_with_sep",
-        columns=["level", "is_separator"],
+        on=["level", "is_separator"],
     )  # .pipe(debug, "wide_table")
     max_level = long_table["level"].max()
     current_level = max_level
@@ -565,6 +651,16 @@ def nest(
     return df
 
 
+def nest_to(df, level=0, column_selector=~sel.idx):
+    current_sep = SEP_NESTING_ORDER[level - 1]
+    # print(current_sep)
+    # return df.select(
+    #     ~column_selector, column_selector
+    # ).select(nest_selector(df, sep=current_sep))
+    return df.select(nest_selector(df, sep=current_sep))
+
+
+# %%
 def _nest_selector_old(
     df: pl.DataFrame,
     sep=".",
@@ -608,7 +704,7 @@ def _nest_selector_old(
     )
 
     wide_table = long_table.pivot(
-        index=["index", "columns"], values="columns_split", columns="level"
+        index=["index", "columns"], values="columns_split", on="level"
     )
 
     max_level = long_table["level"].max()
@@ -998,7 +1094,7 @@ def unstack_column_to_column_name(
             df.filter(pl.col(column_name) == channel_name).select(
                 [
                     *index,
-                    pl.exclude(list(index) + [column_name]).prefix(
+                    pl.exclude(list(index) + [column_name]).name.prefix(
                         f"{channel_name}{sep}"
                     ),
                 ]
@@ -1128,6 +1224,7 @@ def plot_null_columns(
     # ax.invert_yaxis()
 
 
+@deprecated("moved to zfish.polars.utils with changes in default params")
 def plot_df_nulls(
     df: pl.DataFrame,
     index: tuple[str, ...] = ("roi", "object", "label"),

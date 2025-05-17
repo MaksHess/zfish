@@ -1,6 +1,13 @@
 # %%
 import polars as pl
 import polars.selectors as cs
+import pyvista as pv
+
+from zfish.visualize.pyvista_utils import (
+    _get_streamplot_components,
+    compute_norm,
+    stream_plot,
+)
 
 CCP_GRAD_QUICKSAVE = (
     r"C:\Users\hessm\Documents\Programming\Python\thesis\Data\ccp_with_grad.parquet"
@@ -29,7 +36,7 @@ from zfish.visualize.napari_utils import napari_centroids, napari_gradients
 pre_feature = "NormalizedCCP"
 # sort_by = ["cycle", "Ccp__Mean"]
 # sort_by = "order"
-length_scaler = 0.5
+# length_scaler = 0.5
 size_scaler = 0.5
 
 dynamic_size = (
@@ -84,14 +91,6 @@ viewer.add_vectors(
     }
 )
 
-# %%
-import pyvista as pv
-
-from zfish.visualize.pyvista_utils import (
-    _get_streamplot_components,
-    compute_norm,
-    stream_plot,
-)
 
 # %%
 STATIC_PATH = r"C:\Users\hessm\Documents\Programming\Python\thesis\Figures\Plots\ccp_gradient_stream_8-11_static.png"

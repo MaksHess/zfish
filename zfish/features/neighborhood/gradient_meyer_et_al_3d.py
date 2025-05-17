@@ -1,12 +1,8 @@
 # %%
-import matplotlib.pyplot as plt
-import napari
 import numpy as np
 import polars as pl
-import seaborn as sns
 from scipy import linalg
 from scipy.interpolate import RegularGridInterpolator
-from sklearn.metrics import f1_score
 
 
 def gradient_meyer_et_al(sigma, V):
@@ -188,14 +184,14 @@ def compute_errors(grad_true, grad):
     )
 
 
-# %%
 def main():
+    """Run the gradient computation on randomly sampled points in a 3D space."""
     import napari
     import polars as pl
 
     from zfish.features.neighborhood import aggregation_functions as agg_funcs
     from zfish.features.neighborhood.neighborhoods import NeighborhoodQueryObject
-    from zfish.visualize.napari_utils import napari_centroids, napari_gradients
+    from zfish.visualize.napari_utils import napari_gradients
 
     points = get_points()
 

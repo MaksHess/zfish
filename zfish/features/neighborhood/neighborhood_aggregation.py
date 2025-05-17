@@ -1,6 +1,7 @@
 """
 Functions to aggregate feature tables across neighborhoods represented by adjacency matrices and unsing custom aggregation functions.
 """
+
 from typing import TYPE_CHECKING, Callable
 
 import numba as nb
@@ -10,8 +11,6 @@ from scipy import sparse
 
 if TYPE_CHECKING:
     from scipy import sparse
-
-
 
 
 def aggregate_table_nan(
@@ -104,9 +103,6 @@ def aggregate_weighted_table_dense_parallel(
             aggregation_function=aggregation_function,
         )
     return neighborhood_features
-
-
-
 
 
 @nb.jit(parallel=True, cache=True, nopython=True)
@@ -303,7 +299,7 @@ def aggregate_csr_nopar(
 def aggregate_column_csr_polars(
     adjacency_csr: "sparse.csr_array",
     feature_column: np.ndarray | pl.Series,
-    aggregation_function: pl.Expr = pl.col("feature").mean().prefix("Mean_"),
+    aggregation_function: pl.Expr = pl.col("feature").mean().name.prefix("Mean_"),
     weighted: bool = False,
     maintain_order: bool = True,
     return_index: bool = False,
@@ -355,7 +351,7 @@ def aggregate_column_csr_polars(
 def aggregate_table_csr_polars(
     adjacency_csr: "sparse.csr_array",
     feature_array: np.ndarray | pl.DataFrame,
-    aggregation_function: pl.Expr = pl.all().mean().prefix("Mean_"),
+    aggregation_function: pl.Expr = pl.all().mean().name.prefix("Mean_"),
     weighted: bool = False,
     maintain_order: bool = True,
     return_index: bool = False,

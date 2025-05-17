@@ -1,8 +1,9 @@
 """
-Functions to compute radius, knn or touch adjacejcy matrices based on KDTrees or label 
+Functions to compute radius, knn or touch adjacejcy matrices based on KDTrees or label
 images in case of touch neighborhood.
 """
 
+# TODO: import is suuper slow, try to slim down dependencies or factor something out.
 # %%
 import functools
 import inspect
@@ -10,7 +11,15 @@ import logging
 import warnings
 from collections.abc import Callable, Iterable, Sequence
 from itertools import accumulate, product
-from typing import Literal, ParamSpec, TypeAlias, TypeVar, cast
+from typing import (
+    Any,
+    Generator,
+    Literal,
+    ParamSpec,
+    TypeAlias,
+    TypeVar,
+    cast,
+)
 
 import networkx as nx
 import numpy as np
@@ -21,6 +30,7 @@ from scipy import spatial
 from scipy.ndimage import map_coordinates
 from scipy.sparse import csr_array
 from sklearn.neighbors import NearestNeighbors
+from spatial_image import is_spatial_image
 
 from zfish.features.label import get_position_and_orientation_features
 from zfish.features.neighborhood import aggregation_functions
@@ -34,6 +44,7 @@ from zfish.features.neighborhood.neighborhood_matrix_parallel import (
 )
 from zfish.features.polars_utils import unnest_all_structs
 from zfish.features.types import LabelImage, SpatialImage
+from zfish.image.h5_io import ImageMetaAccessor  # noqa
 
 logger = logging.getLogger(__name__)
 
@@ -148,13 +159,14 @@ class KnnKernelQuery(KernelQuery):
 P = ParamSpec("P")
 T = TypeVar("T")
 
+
 class tuple_product:  # type: ignore
-    def __init__(self, *decorator_args):
+    def __init__(self, *decorator_args: str):
         self.decorator_args = decorator_args
 
     def __call__(self, func: Callable[P, T]) -> Callable[P, tuple[T, ...]]:
         @functools.wraps(func)
-        def wrapped_func(*args, **kwargs):
+        def wrapped_func(*args: P.args, **kwargs: P.kwargs):
             function_signature = inspect.signature(func).parameters
             adjusted_kwargs = {
                 **{
@@ -167,6 +179,7 @@ class tuple_product:  # type: ignore
                 ),  # warp positional arguments as kwargs
                 **kwargs,
             }
+            empty_args = tuple()
 
             # package arguments in iterable if they're not already.
             for decorator_arg in self.decorator_args:
@@ -180,7 +193,7 @@ class tuple_product:  # type: ignore
             iter_args = {e: adjusted_kwargs.pop(e) for e in self.decorator_args}
             for e in product(*iter_args.values()):
                 params = {**dict(zip(iter_args.keys(), e)), **adjusted_kwargs}
-                out.append(func(**params))
+                out.append(func(*empty_args, **params))
             return tuple(out)
 
         return wrapped_func
@@ -271,7 +284,7 @@ def multilineprofile(
     ends: NDArray,
     order: int = 3,
     n_samples: int = 30,
-    scale: Sequence[int] | np.ndarray | None = None,
+    scale: Sequence[float] | np.ndarray | None = None,
 ):
     """Interpolate an image between start- and end-points, i. e. compute lineprofiles.
     Points are assumed to be in physical coordinates! The image scale is taken from
@@ -294,7 +307,7 @@ def multilineprofile(
         Order of interpolation (0-5, see `scipy.ndimage.map_coordinates`), by default 3
     n_samples : int, optional
         Number of samples to draw per lineprofile, by default 30
-    scale: Sequence[int], np.ndarray, optional, (n_dim, )
+    scale: Sequence[float], np.ndarray, optional, (n_dim, )
         ([z], y, x) scale of the image. Passing scale overrides the scale read from a
         `SpatialImage`.
 
@@ -310,7 +323,7 @@ def multilineprofile(
     )
     lines = lines.reshape(ndims, -1)
     # TODO: Do this check with a validator (i. e. is_spatialimage)?
-    if isinstance(img, SpatialImage) and scale is None:
+    if is_spatial_image(img) and scale is None:
         scale = np.asarray(img.meta.scale).reshape(1, -1).T
     elif scale is None:
         scale = np.array([1.0] * img.ndim).reshape(1, -1).T
@@ -345,30 +358,40 @@ class make_iterable:  # type: ignore
         return wrapped_func
 
 
+GenT = TypeVar("GenT")
+GenP = ParamSpec("GenP")
+
+
 class generator_over:  # type: ignore
-    def __init__(self, *decorator_args):
+    def __init__(self, *decorator_args: str):
         self.decorator_args = decorator_args
 
-    def __call__(self, func):
+    def __call__(
+        self, func: Callable[GenP, GenT]
+    ) -> Callable[GenP, Generator[GenT, Any, None]]:
         @functools.wraps(func)
-        def wrapped_func(*args, **kwargs):
-            adjusted_kwargs = {
+        def wrapped_func(*args: GenP.args, **kwargs: GenP.kwargs):
+            adjusted_kwargs: dict[str, Any] = {
                 **dict(
                     zip(inspect.signature(func).parameters, args)
                 ),  # warp positional arguments in a dict and pass as kwarg
                 **kwargs,
             }
+            empty_args = tuple()
 
             # package arguments in iterable if they're not already.
             for decorator_arg in self.decorator_args:
-                if not isinstance(adjusted_kwargs[decorator_arg], Iterable):
-                    adjusted_kwargs[decorator_arg] = [adjusted_kwargs[decorator_arg]]
-
+                if not isinstance(
+                    adjusted_kwargs[decorator_arg], Iterable
+                ) or isinstance(adjusted_kwargs[decorator_arg], str):
+                    adjusted_kwargs[decorator_arg] = (adjusted_kwargs[decorator_arg],)
             # separate out arguments to iterate over, iterate, yield results.
-            iter_args = {e: adjusted_kwargs.pop(e) for e in self.decorator_args}
+            iter_args: dict[str, Iterable[Any]] = {
+                e: adjusted_kwargs.pop(e) for e in self.decorator_args
+            }
             for e in product(*iter_args.values()):
                 params = {**dict(zip(iter_args.keys(), e)), **adjusted_kwargs}
-                yield func(**params)
+                yield func(*empty_args, **params)
 
         return wrapped_func
 
@@ -433,9 +456,9 @@ def _delaunay_adjacency(
 # TODO: Weighted by "shared surface"?
 def get_delaunay_adjacency(
     points: NDArray,
-    mask: SpatialImage | None = None,
+    mask: LabelImage | None = None,
     n_samples=50,
-):
+) -> DelaunayAdjacency:
     adj = _delaunay_adjacency(points)
     if mask is None:
         return DelaunayAdjacency(csr=adj, is_weighted=False)
@@ -451,9 +474,16 @@ def get_delaunay_adjacency(
 
 
 # TODO: implement
-def get_touch_adjacency(label_image: SpatialImage, absolute_surface=True):
+def get_touch_adjacency(
+    label_image: LabelImage, absolute_surface=True
+) -> TouchAdjacency:
+    if "z" not in label_image.dims:
+        scale = (1.0, *label_image.meta.scale)
+        label_image = label_image.expand_dims("z", 0)
+    else:
+        scale = label_image.meta.scale
     touch_matrix = weighted_anisotropic_touch_matrix(
-        label_image.to_numpy().astype("int32"), *label_image.meta.scale
+        label_image.to_numpy().astype("int32"), *scale
     )
     np.fill_diagonal(touch_matrix, 0)
     labels = np.unique(label_image)[1:]
@@ -498,13 +528,13 @@ def query_radius_distance(
 @generator_over("neighbors")
 def query_knn_adjacency(
     neighbors: NearestNeighbors,
-    k: int | Iterable[int],
+    k: int,
     self_loops: bool = False,
 ) -> CSRArray:
     n_objects = neighbors._fit_X.shape[0]
     if k > (n_objects - 1):
         logger.warn(
-            f"k={k} > (n_objects-1)={(n_objects-1)}; setting k to {n_objects-1}"
+            f"k={k} > (n_objects-1)={(n_objects - 1)}; setting k to {n_objects - 1}"
         )
         k = n_objects - 1
     X = neighbors._fit_X if self_loops else None
@@ -519,13 +549,13 @@ def query_knn_adjacency(
 @generator_over("neighbors")
 def query_knn_distance(
     neighbors: NearestNeighbors,
-    k: int | Iterable[int],
+    k: int,
     self_loops: bool = False,
 ) -> CSRArray:
     n_objects = neighbors._fit_X.shape[0]
     if k > (n_objects - 1):
         logger.warn(
-            f"k={k} > (n_objects-1)={(n_objects-1)}; setting k to {n_objects-1}"
+            f"k={k} > (n_objects-1)={(n_objects - 1)}; setting k to {n_objects - 1}"
         )
         k = n_objects - 1
     X = neighbors._fit_X if self_loops else None
@@ -654,17 +684,19 @@ def query_delaunay_adjacency(
 class NeighborhoodQueryObject:
     def __init__(
         self,
+        label: pl.DataFrame,
         neighbors: dict[str, NearestNeighbors],
         touch_adjacency: TouchAdjacency | None = None,
         delaunay_adjacency: DelaunayAdjacency | None = None,
-        label: pl.DataFrame | None = None,
         queries: "tuple[NeighborhoodQuery, ...]" = tuple(),
+        region_id_column: str | None = None,
     ):
         self.neighbors = neighbors
         self.touch_adjacency = touch_adjacency
         self.delaunay_adjacency = delaunay_adjacency
         self.label = label
         self.queries = queries
+        self.region_id_column = region_id_column
 
     @classmethod
     def from_dataframe(
@@ -685,20 +717,20 @@ class NeighborhoodQueryObject:
             for label_column in label_columns:
                 assert label_column in df, f"'{label_column}' not found."
             label = df.select(label_columns)
-            assert (
-                label.unique().height == df.height
-            ), f"None unique labels when using label_columns: `{tuple(label_columns)}`"
+            assert label.unique().height == df.height, (
+                f"None unique labels when using label_columns: `{tuple(label_columns)}`"
+            )
 
         if region_id_column is not None:
-            assert (
-                region_id_column in df
-            ), f"`region_id_column` '{region_id_column}' not found."
-            assert df[
-                region_id_column
-            ].is_sorted(), "`df` must be sorted by `region_id_column`."
-            dfs = df.groupby(region_id_column, maintain_order=True)
+            assert region_id_column in df, (
+                f"`region_id_column` '{region_id_column}' not found."
+            )
+            assert df[region_id_column].is_sorted(), (
+                "`df` must be sorted by `region_id_column`."
+            )
+            dfs = df.group_by([region_id_column], maintain_order=True)
         else:
-            dfs = [("site_0", df)]
+            dfs = [(("site0",), df)]
 
         neighbors = dict()
         delaunays = []
@@ -726,12 +758,14 @@ class NeighborhoodQueryObject:
             )
 
         return NeighborhoodQueryObject(
-            neighbors=neighbors,
             label=label,
+            neighbors=neighbors,
             touch_adjacency=touch_adjacency,
             delaunay_adjacency=delaunay_adjacency,
+            region_id_column=region_id_column,
         )
 
+    # TODO: pass on absolute_surface to
     @classmethod
     def from_labelimage(
         cls,
@@ -741,20 +775,23 @@ class NeighborhoodQueryObject:
     ) -> "NeighborhoodQueryObject":
         if isinstance(lbl, dict):
             if mask is not None:
-                assert isinstance(
-                    mask, dict
-                ), "You need to pass a dict of mask's if you pass a dict of lbl's"
-                assert set(lbl.keys()) == set(
-                    mask.keys()
-                ), "Dictionaries have inconsistent keys."
+                assert isinstance(mask, dict), (
+                    "You need to pass a dict of mask's if you pass a dict of lbl's"
+                )
+                assert set(lbl.keys()) == set(mask.keys()), (
+                    "Dictionaries have inconsistent keys."
+                )
 
             dfs = []
+            touches = []
             delaunays = []
             for roi_id, lb in lbl.items():
                 df = get_position_and_orientation_features(lb).with_columns(
                     roi=pl.lit(roi_id)
                 )
-                dfs.append(df)
+                dfs.append(df.with_columns(pl.lit(roi_id).alias("roi")))
+                touches.append(get_touch_adjacency(lb, absolute_surface=False))
+                # If a mask is provided compute masked delaunay here, otherwise pass on to from_dataframe constructor
                 if mask is not None:
                     points = (
                         df.pipe(unnest_all_structs, sep=".")
@@ -767,14 +804,26 @@ class NeighborhoodQueryObject:
                         )
                     )
             df = pl.concat(dfs)
-            delaunay_adjacency = DelaunayAdjacency(
-                csr=_csr_concatenate_along_corner(e.csr for e in delaunays),
+            touch_adjacency = TouchAdjacency(
+                csr=_csr_concatenate_along_corner(e.csr for e in touches),
                 is_weighted=True,
             )
+            if delaunays == []:
+                delaunay_adjacency = None
+            else:
+                delaunay_adjacency = DelaunayAdjacency(
+                    csr=_csr_concatenate_along_corner(e.csr for e in delaunays),
+                    is_weighted=True,
+                )
+            label_columns = ("roi", "label")
+            region_id_column = "roi"
 
         else:
             df = get_position_and_orientation_features(lbl)
             if mask is not None:
+                assert isinstance(mask, LabelImage), (
+                    "If you pass lbl: LabelImage you also need to pass mask: LabelImage"
+                )
                 points = (
                     df.pipe(unnest_all_structs, sep=".")
                     .select(["Centroid.z", "Centroid.y", "Centroid.x"])
@@ -785,10 +834,16 @@ class NeighborhoodQueryObject:
                 )
             else:
                 delaunay_adjacency = None
-        touch_adjacency = get_touch_adjacency(lbl, absolute_surface=False)
+            touch_adjacency = get_touch_adjacency(lbl, absolute_surface=False)
+            label_columns = "label"
+            region_id_column = None
 
         return cls.from_dataframe(
-            df, delaunay_adjacency=delaunay_adjacency, touch_adjacency=touch_adjacency
+            df,
+            region_id_column=region_id_column,
+            label_columns=label_columns,
+            delaunay_adjacency=delaunay_adjacency,
+            touch_adjacency=touch_adjacency,
         )
 
     @classmethod
@@ -799,11 +854,13 @@ class NeighborhoodQueryObject:
         mask: LabelImage | None = None,
         mask_n_samples: int = 100,
     ):
-        df = pl.DataFrame(data=points, schema=schema).with_row_count(name="label")
+        df = pl.DataFrame(data=points, schema=schema).with_row_index(name="label")
         if mask is not None:
             delaunay_adjacency = get_delaunay_adjacency(
                 points, mask, n_samples=mask_n_samples
             )
+        else:
+            delaunay_adjacency = None
         return NeighborhoodQueryObject.from_dataframe(
             df,
             centroid_column=schema,
@@ -824,15 +881,27 @@ class NeighborhoodQueryObject:
 
     @property
     def index(self):
-        return self.label.with_row_count(name="index").select(pl.col("index"))
+        return self.label.with_row_index(name="index").select(pl.col("index"))
+
+    @property
+    def region_ids(self):
+        if self.region_id_column is not None:
+            return self.label[self.region_id_column]
+        else:
+            return pl.Series(
+                "roi",
+                ["site0" for _ in range(self.label.height)],
+                dtype=pl.Enum(["site0"]),
+            )
 
     def add_queries(self, queries: "tuple[NeighborhoodQuery, ...]"):
         return NeighborhoodQueryObject(
+            label=self.label,
             neighbors=self.neighbors,
             touch_adjacency=self.touch_adjacency,
             delaunay_adjacency=self.delaunay_adjacency,
-            label=self.label,
             queries=self.queries + queries,
+            region_id_column=self.region_id_column,
         )
 
     def radius(
@@ -927,9 +996,9 @@ class NeighborhoodQueryObject:
             df = unnest_all_structs(df.to_frame())
         elif df is None:
             for func in funcs:
-                assert (
-                    func.__name__ in aggregation_functions.NEIGHBORS
-                ), f"Cannot to '{func.__name__}' aggregation without `df`."
+                assert func.__name__ in aggregation_functions.NEIGHBORS, (
+                    f"Cannot to '{func.__name__}' aggregation without `df`."
+                )
         else:
             raise ValueError(
                 f"`df` must be polars.Series or polars.DataFrame, not `{type(df)}`"
@@ -941,7 +1010,7 @@ class NeighborhoodQueryObject:
             if df.height != rows_before:
                 warnings.warn(
                     "Joining `NeighborhoodQueryObject.label` with the provided `df` "
-                    f"lead to dropping of {rows_before-df.height}/{rows_before} rows."
+                    f"lead to dropping of {rows_before - df.height}/{rows_before} rows."
                 )
             if drop_label_columns_from_df:
                 for c in self.label.columns:
@@ -981,18 +1050,18 @@ class NeighborhoodQueryObject:
                                     "neighbor": pl.UInt32,
                                 },
                             )
-                            .groupby("index", maintain_order=True)
+                            .group_by("index", maintain_order=True)
                             .agg(
                                 (
                                     pl.col("neighbor")
-                                    .map_dict(
+                                    .replace_strict(
                                         dict(
                                             zip(
                                                 *self.label.select(
                                                     pl.struct(pl.all())
-                                                ).with_row_count()
+                                                ).with_row_index(name="row_nr")
                                             )
-                                        )
+                                        ),
                                     )
                                     .alias(base_name)
                                     if func.__name__ == "Neighbors"
@@ -1022,7 +1091,7 @@ class NeighborhoodQueryObject:
                         pl.DataFrame(
                             data=aggregated_table,
                             schema=df.columns,
-                        ).select(pl.all().prefix(prefix_str))
+                        ).select(pl.all().name.prefix(prefix_str))
                     )
 
         if return_label:

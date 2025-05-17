@@ -1,22 +1,21 @@
 # %%
 from __future__ import annotations
 
+import time
 from pathlib import Path
+from threading import Thread
 from typing import Literal, Union
 
 import easing_functions as ease_func
 import h5py
-import itk
 import numpy as np
 import pandas as pd
 import polars as pl
 import pyvista as pv
 import vtk
-from pyvista import PolyData, examples
+from pyvista.core.utilities.helpers import is_pyvista_dataset
 from scipy.spatial import ConvexHull
-from zfish.abbott_legacy import h5_files as h5
-from zfish.abbott_legacy.conversions import to_itk, to_numpy
-from zfish.abbott_legacy.h5_files import h5_summary
+
 from zfish.io.draw import angle_between, rot_safe
 from zfish.plot.plot_commons import cmaps
 
@@ -37,147 +36,47 @@ EASING_FUNCTIONS = {
 }
 
 EasingFunction = Literal[EASING_FUNCTIONS.keys()]
-pv.set_jupyter_backend("html")
-pv.global_theme.notebook = False
 
 
 def main():
     example_stream_plot()
-    # import polars as pl
-
-    # pv.set_jupyter_backend("html")
-    # pv.global_theme.notebook = False
-
-    # df = pl.read_parquet(
-    #     r"C:\Users\hessm\Documents\Programming\Python\zfish\paper\linear_models_in_r_features.parquet"
-    # )
-    # df = pl.read_csv(
-    #     r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\features\neighborhood\gradient_RADIUS-50s_CircMean__NormalizedCcp.csv"
-    # )
-    # print(df)
-
-    # df_one = df.filter(pl.col("roi") == "F04_px+2084_py-0112")
-
-    # p = stream_plot(
-    #     df_one,
-    #     stream_source_n_points=1000,
-    #     point_size=15,
-    #     convex_hull=False,
-    # )
-    # p.show()
 
 
-def to_vtk(img):
-    return itk.vtk_image_from_image(to_itk(img))
+def get_theme():
+    doc_theme = pv.themes.DocumentTheme()
+
+    doc_theme.notebook = False
+
+    doc_theme.camera.position = [0, 0, -1]
+    doc_theme.camera.viewup = [0, -1, 0]
+
+    doc_theme.colorbar_orientation = "vertical"
+    doc_theme.colorbar_vertical.position_y = (
+        1 - doc_theme.colorbar_vertical.height
+    ) / 2
+    doc_theme.colorbar_vertical.position_x = 0.88
+    doc_theme.colorbar_vertical.width = 0.06
+
+    doc_theme.transparent_background = False
+
+    doc_theme.hidden_line_removal = False
+
+    doc_theme.anti_aliasing = "ssaa"
+
+    doc_theme.window_size = [1024, 672]
+    return doc_theme
 
 
-def discrete_marching_cubes(
-    lbl_img: Union[h5py.Dataset, itk.Image], smooth_iter=0, calculate_neighbors=False
-):
-    labels = np.unique(to_numpy(lbl_img))[1:]
-    lbl_img = to_vtk(to_itk(lbl_img))
-
-    discrete = vtk.vtkDiscreteMarchingCubes()
-    discrete.SetInputData(lbl_img)
-    discrete.SetComputeAdjacentScalars(calculate_neighbors)
-    for i, l in enumerate(labels):
-        discrete.SetValue(i, l)
-    discrete.Update()
-    return pv.wrap(discrete.GetOutput()).smooth(smooth_iter)
+DEFAULT_THEME = get_theme()
 
 
-def smooth_discrete_marching_cubes(
-    lbl_img: Union[h5py.Dataset, itk.Image],
-    smoothing_iterations=0,
-    calculate_neighbors=False,
-    use_flyingedges=True,
-):
-    labels = np.unique(to_numpy(lbl_img))[1:]
-    lbl_img = to_vtk(to_itk(lbl_img))
-
-    if use_flyingedges:
-        discrete = vtk.vtkDiscreteFlyingEdges3D()
-    else:
-        discrete = vtk.vtkDiscreteMarchingCubes()
-        discrete.SetComputeAdjacentScalars(calculate_neighbors)
-
-    discrete.SetInputData(lbl_img)
-    for i, l in enumerate(labels):
-        discrete.SetValue(i, l)
-
-    pass_band = 0.001
-    feature_angle = 120.0
-
-    smoother = vtk.vtkWindowedSincPolyDataFilter()
-    smoother.SetInputConnection(discrete.GetOutputPort())
-    smoother.SetNumberOfIterations(smoothing_iterations)
-    smoother.BoundarySmoothingOff()
-    smoother.FeatureEdgeSmoothingOff()
-    smoother.SetFeatureAngle(feature_angle)
-    smoother.SetPassBand(pass_band)
-    smoother.NonManifoldSmoothingOn()
-    smoother.NormalizeCoordinatesOn()
-    smoother.Update()
-    return pv.wrap(smoother.GetOutput())
+def set_theme(theme=DEFAULT_THEME):
+    pv.set_plot_theme(theme)
 
 
-def discrete_marching_cubes_vtk(
-    lbl_img: Union[h5py.Dataset, itk.Image], smooth_iter=0, calculate_neighbors=False
-):
-    labels = np.unique(to_numpy(lbl_img))[1:]
-    lbl_img = to_vtk(to_itk(lbl_img))
-
-    discrete = vtk.vtkDiscreteMarchingCubes()
-    discrete.SetInputData(lbl_img)
-    discrete.SetComputeAdjacentScalars(calculate_neighbors)
-    for i, l in enumerate(labels):
-        discrete.SetValue(i, l)
-    discrete.Update()
-    return discrete.GetOutput()
-
-
-MESH_COMPONENTS = ("points", "cells")
-
-
-def attach_scalars_to_mesh(
-    mesh,
-    df,
-    mesh_label_array="Scalars",
-    df_label_column="label",
-    features=None,
-    target="points",
-    inplace=True,
-):
-    if not inplace:
-        mesh = mesh.copy()
-    if target not in MESH_COMPONENTS:
-        raise ValueError(f"Target must be one of {MESH_COMPONENTS}")
-    data = mesh.point_data if target == MESH_COMPONENTS[0] else mesh.cell_data
-    if mesh_label_array not in data:
-        raise ValueError(
-            f"Mesh {target[:-1]}_array does not contain: {mesh_label_array!r}"
-        )
-    if df_label_column not in "label":
-        raise ValueError(f"df does not contain column: {df_label_column!r}")
-    if features is None:
-        features = [e for e in df.columns if e != df_label_column]
-    else:
-        if not all([e in df for e in features]):
-            raise ValueError(f"df doesn not contain all of: {features}")
-
-    for feature in features:
-        f_map = (
-            df.select(df_label_column, feature)
-            .to_pandas()
-            .set_index(df_label_column)[feature]
-            # .to_dict()
-        )
-        data[feature] = vec_translate(data[mesh_label_array], f_map)
-    return mesh
-
-
-def vec_translate(a, d):
-    return np.vectorize(d.__getitem__)(a)
+def set_config(theme=DEFAULT_THEME, **kwargs):
+    set_theme(theme)
+    pv.set_jupyter_backend("trame")
 
 
 def _generate_orbital_path(
@@ -257,18 +156,10 @@ def generate_arc_path(
             "Either provide `plotter` or `viewup`, `center` and `extent`"
         )
         camera_viewup = pv.global_theme.camera.viewup
-    # print(extent, factor)
-    center = np.array(center)
-    viewup = np.array(viewup)
-    radius = np.array(extent) * factor
-    # center, radius, viewup = _generate_orbital_path(
-    #     viewup=viewup,
-    #     center=center,
-    #     extent=extent,
-    #     shift=shift,
-    #     factor=factor,
-    #     plotter=plotter,
-    # )
+
+    center = np.asarray(center)
+    viewup = np.asarray(viewup)
+    radius = np.asarray(extent) * factor
 
     center += viewup * shift
 
@@ -313,7 +204,7 @@ def polyhull(points):
 def compute_norm(vector_components):
     expr = pl.sum_horizontal(
         *[pl.col(component) ** 2 for component in vector_components]
-    )
+    ).sqrt()
     return expr
 
 
@@ -321,32 +212,45 @@ def _get_streamplot_components(
     df,
     centroid_columns=("Centroid-z", "Centroid-y", "Centroid-x"),
     vector_components=("CcpGradient-z", "CcpGradient-y", "CcpGradient-x"),
-    vector_scale: str | None = "LogCcpNorm",
+    vector_scale: str | None = None,
     vector_scale_factor: float = 1.0,
     stream_terminal_speed=0.5,
     stream_source_n_points=3000,
+    interp_grid_spacing=10,
+    interp_grid_padding: float = 0,  # percent of points physical extent
     **streamline_kwargs,
 ):
     point_cloud = pv.PolyData(df.select(centroid_columns).to_numpy())
     point_cloud["vectors"] = df.select(vector_components).to_numpy()
     if vector_scale is None:
         vector_norms = df.select(
-            compute_norm(vector_components).log().alias("LogCcpNorm")
+            compute_norm(vector_components).alias("LogCcpNorm")
         ).to_numpy()
-        vector_scale = "logCcpNorm"
+        vector_scale = "LogCcpNorm"
     else:
         vector_norms = df.select(vector_scale).to_numpy()
     point_cloud["norm"] = vector_norms
-
     geom = pv.Arrow()  # This could be any dataset
 
+    point_cloud_extent = np.array(point_cloud.bounds[1::2]) - np.array(
+        point_cloud.bounds[0::2]
+    )
+    point_cloud_center = np.array(point_cloud.center)
+
+    grid_spacing = np.array(
+        [interp_grid_spacing, interp_grid_spacing, interp_grid_spacing]
+    )
+    grid_extent = np.ceil((point_cloud_extent) / grid_spacing) * grid_spacing
+    grid_origin = point_cloud_center - grid_extent / 2 + grid_spacing / 2
+    grid_dimensions = (grid_extent / grid_spacing).round().astype(int)
+
     grid = pv.ImageData()
-    grid.origin = (0, 0, 0)
-    grid.spacing = (10, 10, 10)
-    grid.dimensions = (30, 65, 65)
+    # grid.origin = (0, 0, 0)
+    grid.origin = grid_origin
+    grid.spacing = grid_spacing
+    grid.dimensions = grid_dimensions
 
     interp_raw = grid.interpolate(point_cloud, radius=50, strategy="mask_points")
-
     hull = polyhull(point_cloud.points)
     interp = grid.interpolate(
         interp_raw.select_enclosed_points(hull).threshold(
@@ -396,8 +300,9 @@ def stream_plot(
     df,
     centroid_columns=("centroid.z", "centroid.y", "centroid.x"),
     vector_components=("grad.z", "grad.y", "grad.x"),
-    vector_scale: str | None = "LogCcpNorm",
+    vector_scale: str | None = None,
     points=True,
+    points_as_glyphs=False,
     point_hue: str | None = "NormalizedCCP",
     point_hue_norm: tuple[float, float] = (0.0, 2 * np.pi),
     point_palette=cmaps.ccp.to_mpl(),
@@ -440,13 +345,29 @@ def stream_plot(
         if point_hue is not None:
             ps[point_hue] = df.select(point_hue).to_numpy()
             ps.set_active_scalars(point_hue)
-        po.add_mesh(
-            ps,
-            cmap=point_palette,
-            render_points_as_spheres=True,
-            point_size=point_size,
-            clim=point_hue_norm,
-        )
+
+        if points_as_glyphs:
+            sphere = pv.Sphere(
+                theta_resolution=8, phi_resolution=8, radius=0.5 * point_size
+            )
+            glyphs = ps.glyph(
+                scale=False, orient=False, geom=sphere, color_mode="scalar"
+            )
+            plot_components["point_glyphs"] = glyphs
+            po.add_mesh(
+                glyphs,
+                cmap=point_palette,
+                clim=point_hue_norm,
+                smooth_shading=True,
+            )
+        else:
+            po.add_mesh(
+                ps,
+                cmap=point_palette,
+                render_points_as_spheres=True,
+                point_size=point_size,
+                clim=point_hue_norm,
+            )
     if convex_hull:
         po.add_mesh(plot_components["hull"], style="wireframe")
     if quiver_points:
@@ -471,7 +392,7 @@ def stream_plot(
     return po
 
 
-def get_points(
+def _get_points(
     df,
     centroid_columns=("centroid.z", "centroid.y", "centroid.x"),
     features=(),
@@ -486,7 +407,7 @@ def get_points(
     return points
 
 
-def plot_points(
+def _plot_points(
     points: pv.PolyData,
     hue=None,
     hue_norm=None,
@@ -513,7 +434,7 @@ def plot_points(
 
 
 def write_gif(df, features, out_file, hue_norm=None, fps=10):
-    points = get_points(df, features=features)
+    points = _get_points(df, features=features)
     points
     dir(points)
     default_cpos = [
@@ -529,7 +450,7 @@ def write_gif(df, features, out_file, hue_norm=None, fps=10):
         image_scale=1,
     )
 
-    po = plot_points(points, hue_norm=hue_norm)
+    po = _plot_points(points, hue_norm=hue_norm)
     # po.add_mesh(
     #     points,
     #     render_points_as_spheres=True,
@@ -574,11 +495,6 @@ def example_write_gif(write_path=WRITE_PATH):
 def example_stream_plot(write_path=WRITE_PATH):
     import polars as pl
 
-    pv.set_jupyter_backend("trame")
-    pv.global_theme.notebook = False
-    # df = pl.read_parquet(
-    #     r"C:\Users\hessm\Documents\Programming\Python\zfish\paper\linear_models_in_r_features.parquet"
-    # )
     df = pl.read_csv(
         r"C:\Users\hessm\Documents\Programming\Python\zfish\zfish\features\neighborhood\gradient_RADIUS-50s_CircMean__NormalizedCcp.csv"
     )
@@ -588,14 +504,15 @@ def example_stream_plot(write_path=WRITE_PATH):
     comps, p = stream_plot(
         df_one,
         points=True,
+        points_as_glyphs=True,
         stream_source_n_points=1000,
-        point_size=12,
+        point_size=18,
         convex_hull=False,
-        centroid_columns=("Centroid-z", "Centroid-y", "Centroid-x"),
-        vector_components=("CcpGradient-z", "CcpGradient-y", "CcpGradient-x"),
+        centroid_columns=("Centroid-x", "Centroid-y", "Centroid-z"),
+        vector_components=("CcpGradient-x", "CcpGradient-y", "CcpGradient-z"),
         point_hue="RADIUS-50s_CircMean__NormalizedCcp",
-        # point_hue_norm=(0, 2*np.pi),
-        stream_hue="IntegrationTime",
+        point_hue_norm=(0, 2 * np.pi),
+        stream_hue=None,
         stream_hue_norm=(-400, 400),
         stream_render_lines_as_tubes=True,
         stream_line_width=4,
@@ -605,6 +522,62 @@ def example_stream_plot(write_path=WRITE_PATH):
 
     if write_path is not None:
         p.export_html(Path(write_path) / "ccp_gradient_stream.html")
+
+    p.show()
+
+
+def example_full_stream_plot(
+    point_hue="div",
+    hue_norm=None,
+    point_hue_norm=(-0.0001, 0.0001),
+    point_palette="PiYG",
+):
+    import polars as pl
+
+    CCP_GRAD_QUICKSAVE = (
+        r"C:\Users\hessm\Documents\Programming\Python\thesis\Data\ccp_with_grad.parquet"
+    )
+    df_all = pl.scan_parquet(CCP_GRAD_QUICKSAVE).collect()
+    size_scaler = 0.5
+
+    dynamic_size = (
+        (1 / df_all["log2_nuc__Count_corr"])
+        / (1 / df_all["log2_nuc__Count_corr"].max())
+        * 15
+        * size_scaler
+    )
+
+    p = pv.Plotter()
+    for name, df in (
+        df_all.with_columns(pl.Series("dyn_size", dynamic_size))
+        .filter(pl.col("cycle") < 11)
+        .group_by("roi")
+    ):
+        point_size = df["dyn_size"][0]
+        comps, p = stream_plot(
+            df,
+            points=True,
+            points_as_glyphs=True,
+            stream_source_n_points=1000,
+            point_size=point_size,
+            convex_hull=False,
+            centroid_columns=("centroid.x", "centroid.y", "centroid.z"),
+            vector_components=("grad.x", "grad.y", "grad.z"),
+            point_hue=point_hue,
+            point_hue_norm=point_hue_norm,
+            point_palette=point_palette,
+            # point_hue_norm=(0, 2 * np.pi),
+            stream_hue=None,
+            stream_hue_norm=(-400, 400),
+            # stream_render_lines_as_tubes=True,
+            stream_line_width=1,
+            return_components=True,
+            po=p,
+        )
+    p.parallel_projection = True
+
+    # if write_path is not None:
+    #     p.export_html(Path(write_path) / "ccp_gradient_stream.html")
 
     p.show()
 
@@ -622,12 +595,6 @@ def example_checkbox(write_path=WRITE_PATH):
     if write_path is not None:
         p.export_html(Path(write_path) / "checkbox_test.html")
     p.show()
-
-
-import time
-from threading import Thread
-
-from pyvista.core.utilities.helpers import is_pyvista_dataset
 
 
 def _shift_cpos_down(shift, plotter):

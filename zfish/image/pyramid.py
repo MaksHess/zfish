@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 if itk.__version__ >= "5.4.0":
+    # TODO: remove this when ITK 5.4.0 is compatible
     logger.warning(
         f"Some of the functions in {__name__!r} don't work in itk 5.4.0, if you get weird results consider donwgrading to 5.3.0"
     )

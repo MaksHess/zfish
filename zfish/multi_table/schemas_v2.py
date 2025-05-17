@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import pandera.polars as pa
 import polars as pl
 import polars.selectors as cs
+
 from zfish.multi_table.schemas_id_v2 import FrameId
 from zfish.preprocessing.types import ColName, QualColName, QualFrameName
 
@@ -450,9 +451,6 @@ def build_schema(include_hidden=True):
         f"{FK('Tables.fks.cols')}target.cols": pl.List(pl.String),
     }
 
-    REGION_TABLES = ["plates", "wells", "rois", "label_objects"]
-    SAMPLED_REGION_TABLES = ["rois", "label_objects"]
-
     schema["_Resources.plates.v2"] = {
         f"{PK}{PLATE}": CAT_TYPE,
         f"{D_}{Z}.lower": pl.Float64,
@@ -467,8 +465,7 @@ def build_schema(include_hidden=True):
     }
 
     DIM_BASE_ENUM = pl.Enum(["roi", "m", "o", "c", "t", "z", "y", "x"])
-    DIM_REGION_ENUM = pl.Enum(["plate", "well", "site", "roi"])
-    DIM_OBJECT_ENUM = pl.Enum([""])
+    DIM_REGION_ENUM = pl.Enum(["plate", "well", "roi", "label_object"])
     DIM_RASTER_ENUM = pl.Enum(["image", "label_image", "label_object"])
 
     schema["_Resources.roots"] = {
@@ -736,27 +733,14 @@ def build_schema(include_hidden=True):
     schema["Regions.plates"] = schema["Resources.plates"]
     schema["Regions.wells"] = schema["Resources.wells"]
     schema["Regions.rois"] = schema["Resources.rois"]
-    schema["Regions.spatial_objects"] = {
-        f"{FK_ROI}{PK}{ROI}": CAT_TYPE,
-        f"{FK_OBJ}{PK}{OBJ}": CAT_TYPE,
-        f"{PK}{LABEL}": pl.UInt32,
-        "centroid.z": pa.Column(pl.Float64, nullable=True),
-        "centroid.y": pa.Column(pl.Float64, nullable=True),
-        "centroid.x": pa.Column(pl.Float64, nullable=True),
-        f"{BOUNDS_}{Z}.lower": pl.Float64,
-        f"{BOUNDS_}{Z}.upper": pl.Float64,
-        f"{BOUNDS_}{Y}.lower": pl.Float64,
-        f"{BOUNDS_}{Y}.upper": pl.Float64,
-        f"{BOUNDS_}{X}.lower": pl.Float64,
-        f"{BOUNDS_}{X}.upper": pl.Float64,
-    }
+    schema["Regions.spatial_objects"] = schema["Resources.spatial_objects"]
 
     schema["Raster.images"] = schema["Resources.images"]
     schema["Raster.label_images"] = schema["Resources.label_images"]
     schema["Raster.label_objects"] = schema["Resources.label_objects"]
 
-    schema["Models.z_models"] = schema["Resources.z_models"]
-    schema["Models.t_models"] = schema["Resources.t_models"]
+    schema["BiasModels.z_models"] = schema["Resources.z_models"]
+    schema["BiasModels.t_models"] = schema["Resources.t_models"]
     # schema["Models.bg_models"] = {
 
     # }

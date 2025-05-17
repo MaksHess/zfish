@@ -28,9 +28,9 @@ from zfish.intensity_normalization.models import (
 )
 from zfish.visualize.plot_utils import data_range
 
-hv.extension("plotly") # noqa
+hv.extension("plotly")  # noqa
 hv.output(widget_location="bottom")
-pio.templates["gridon"].update( #show grids also for scene (i. e. 3d axes)
+pio.templates["gridon"].update(  # show grids also for scene (i. e. 3d axes)
     dict(
         layout_scene_xaxis=dict(showgrid=True),
         layout_scene_yaxis=dict(showgrid=True),
@@ -66,7 +66,7 @@ def main():
             model_fit = fit_model_to_wide_df(df_fit, model, features)
             models[model_name] = model_fit
 
-    figure_model_comp = plot_models(models, df_fit)
+    figure_model_comp = plot_models(models, df_fit, target_column='DAPI.1_Mean')
 
 
 # %%

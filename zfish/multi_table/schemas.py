@@ -1,33 +1,74 @@
 # %%
+import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 import polars as pl
 import polars.selectors as cs
 
 if TYPE_CHECKING:
-    from polars.type_aliases import SelectorType
+    from zfish.preprocessing.types import SelectorType
+
+
+TABLE_NAME_REGEX = re.compile(
+    r"^(?P<hidden>_)?(?P<multi_table>[A-Z]\w*)\.(?P<table>\w*)(\.v(?P<version>\d\d?))?$"
+)
 
 
 # Base coordinate names for fast changes:
 IDX = "idx"
+FIDX = "fidx"
+SIDX = "sidx"
+MIDX = "midx"
+I = IDX  # noqa: E741
+
+DIM = "dim"
+D = DIM
+
+
+SI = "."
+I_ = f"{I}{SI}"
+FI_ = f"{FIDX}{SI}"
+D_ = f"{DIM}{SI}"
+
+# Coordinate systems (CS)
+ROOT = "root"
+DATASET = "dset"
+PLATE = "plate"
 WELL = "well"
 ROW = "row"
 COL = "col"
+SITE = "site"  # microscopy site, ~ fixed size
 ROI = "roi"
-OBJ = "o"
+LABEL_OBJ = "label_object"
+
+REGION = "region"  # -> CS + bounds
+
+
+T = "t"
+Z = "z"
+Y = "y"
+X = "x"
+MS = "m"
+IT = "it"
+IZ = "iz"
+IY = "iy"
+IX = "ix"
 CH = "c"
+OBJ = "o"
+LABEL = "label"
+
+
+FTYPE = "ftype"
+FEATURE = "f"
 STAIN = "stain"
 ACQUIS = "acquisition"
-MS = "m"
-LABEL = "label"
 PARENT = "parent"
 CHILD = "child"
 DIST_TRANSF = "dtf"
 NHD = "nhood"
 
-I = IDX  # noqa: E741
-SI = "."
+_LABEL_OBJ = f":{LABEL_OBJ}"
 
 PARENT_IDX = (
     f"{I}{SI}{OBJ}{SI}{PARENT}",
@@ -43,9 +84,12 @@ CHILD_IDX = (
 LABEL_OBJECT_IDX = (f"{IDX}{SI}{OBJ}", f"{IDX}{SI}{ROI}", f"{IDX}{SI}{LABEL}")
 
 
-CAT_TYPE = pl.Categorical(ordering="lexical")
+CAT_TYPE: TypeAlias = pl.Categorical(ordering="lexical")
 
 IDX_SEL = cs.starts_with(f"{IDX}{SI}")
+FIDX_SEL = cs.starts_with(f"{FIDX}{SI}")
+SIDX_SEL = cs.starts_with(f"{SIDX}{SI}")
+
 LABEL_OBJECT_SEL = cs.by_name(LABEL_OBJECT_IDX)
 SEL_IDX = IDX_SEL
 SEL_LABEL_OBJECT = LABEL_OBJECT_SEL
@@ -56,10 +100,11 @@ SEL_PARENT = cs.by_name(PARENT_IDX)
 SEL_CHILD = cs.by_name(CHILD_IDX)
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PolarsSelector:
     idx: "SelectorType" = SEL_IDX
     roi: "SelectorType" = SEL_ROI
+    dim: "SelectorType" = cs.starts_with(DIM)
     object_type: "SelectorType" = SEL_O
     label: "SelectorType" = SEL_LABEL
     label_object: "SelectorType" = SEL_LABEL_OBJECT
@@ -71,17 +116,181 @@ class PolarsSelector:
 sel = PolarsSelector()
 
 
-def build_lazy_tables(schema):
+def build_lazy_tables(schema, include_hidden=True):
     tables = {}
     for name, table_schema in schema.items():
+        if not include_hidden:
+            if name.startswith("_"):
+                continue
         tables[name] = pl.LazyFrame(schema=table_schema)
     return tables
 
 
-def build_schema():
+D = "dim"
+D_ = f"{D}{SI}"
+
+R = "arr"
+R_ = f"{R}{SI}"
+
+I = "idx"
+I_ = f"{I}{SI}"
+
+
+SPATIAL_DIM = pl.Enum(
+    [
+        "t",
+        "z",
+        "y",
+        "x",
+    ]
+)
+MULTISCALE_DIM = pl.Enum(["m"])
+SAMPLED_DIM = pl.Enum(
+    [
+        "it",
+        "iz",
+        "iy",
+        "ix",
+    ]
+)
+CHANNEL_DIM = pl.Enum(["c", "intensity", "z_model", "t_model"])
+OBJECT_TYPE_DIM = pl.Enum(["o", "label", "binary", "dtf"])
+
+BASE_DIM = (
+    SPATIAL_DIM.union(SAMPLED_DIM)
+    .union(MULTISCALE_DIM)
+    .union(CHANNEL_DIM)
+    .union(OBJECT_TYPE_DIM)
+)
+
+COORD_DIM = pl.Enum(
+    [
+        "plate",
+        "well",
+        "roi",
+        "label_object",
+    ]
+)
+
+RASTER_DIM = pl.Enum(
+    [
+        "image",
+        "label_image",
+        "binary_mask",
+        "distance_transform",
+    ]
+)
+
+PROCESSING_DIM = pl.Enum(
+    [
+        "pyramid_creation",
+        "registration",
+        "segmentation",
+        "hierarchy",
+        "decay_model",
+        "clf_model",
+        "ccp_model",
+        "reg_model",
+        "nhood",
+        "feature",
+    ]
+)
+
+COMPOUND_DIM = COORD_DIM.union(RASTER_DIM).union(PROCESSING_DIM)
+
+ALL_DIM_ENUM = BASE_DIM.union(COMPOUND_DIM)
+
+DIM_TYPE_ENUM = pl.Enum(
+    [
+        "nominal",
+        "ordinal",
+        "interval",
+        "ratio",
+    ]
+)
+
+
+def build_schema(include_hidden=True):
     schema = {}
 
-    schema["resources.wells"] = {
+    schema["_Dims.base"] = {
+        f"{D}": ALL_DIM_ENUM,
+        "type": DIM_TYPE_ENUM,
+        "long_name": pl.String,
+        "unit": pl.String,
+    }
+
+    schema["_Dims.compound"] = {
+        f"{D}": COMPOUND_DIM,
+        "type": pl.Enum(["nominal", "ordinal", "hierarchical"]),
+        f"{D}.components": pl.List(BASE_DIM),
+        "type.components": pl.List(pl.Enum(["nominal", "ordinal"])),
+    }
+
+    schema["_Dim.resources.raster"] = {
+        f"{D}": pl.Enum(["o", "c", "roi", "well", "plate", "dsets"]),
+        "long_name": pl.String,
+        "type.base": pl.Enum(["nominal", "ordinal"]),
+        "type.sub": pl.Enum(["hierarchical"]),
+        "cardinality": pl.Int32,
+        "values": pl.List(pl.String),
+    }
+    schema["_Dim.resources.model"] = {
+        f"{D}": pl.Enum(
+            ["t_model", "xy_model", "z_model", "clf_model", "ccp_model", "reg_model"]
+        )
+    }
+    schema["_Dim.resources.compound"] = {
+        f"{D}": pl.Enum(
+            ["label_object", "label_image", "hierarchy", "image", "features"]
+        ),
+        "long_name": pl.String,
+        "type.base": pl.Enum(["compound"]),
+    }
+    schema["_Dim.continuous"] = {
+        f"{D}": pl.Enum(["x", "y", "z", "t"]),
+        "long_name": pl.String,
+        "type.base": pl.Enum(["interval", "ratio"]),
+        "type.sub": pl.Enum(["spatial", "temporal"]),
+        "bound.upper": pl.Float64,
+        "bound.lower": pl.Float64,
+        "unit": pl.String,
+    }
+    schema["_Dim.icontinuous"] = {
+        f"{D}": pl.Enum(["ix", "iy", "iz", "it", "m"]),
+        "long_name": pl.String,
+        "type.base": pl.Enum(["ordinal"]),
+        "type.sub": pl.Enum(["ispatial", "itemporal", "multiscale"]),
+        "slice.lower": pl.Int32,
+        "slice.upper": pl.Int32,
+        "unit": pl.String,
+    }
+
+    schema["_Mark.subets"] = {
+        "idx.subset": CAT_TYPE,
+        "type": pl.Enum(["outliers", "stratum", "class_prediction", "cv_folds"]),
+        "feature": pl.String,
+    }
+
+    schema["_Mark.outliers"] = {
+        "idx.outlier": CAT_TYPE,
+    }
+
+    schema["_Resources.roots.v2"] = {
+        f"{I}{SI}{ROOT}": CAT_TYPE,
+        "t.start": pl.Datetime,
+        "path": pl.String,
+        "name": pl.String,
+        "description": pl.String,
+    }
+
+    schema["Resources.plates.v2"] = {
+        f"{I}{SI}{PLATE}": CAT_TYPE,
+        "path": pl.String,
+        "description": pl.String,
+    }
+
+    schema["Resources.wells"] = {
         f"{I}{SI}{WELL}": CAT_TYPE,  # PK
         "row": CAT_TYPE,
         "col": CAT_TYPE,
@@ -91,16 +300,81 @@ def build_schema():
         "translate.plate.y": pl.Float64,
     }
 
-    schema["resources.rois"] = {
-        f"{I}{SI}{ROI}": CAT_TYPE,  # PK
-        "well": CAT_TYPE,  # FK(wells)
-        "site": CAT_TYPE,
-        f"{ROI}.path": pl.String,
-        "translate.well.x": pl.Float64,
-        "translate.well.y": pl.Float64,
+    schema["Resources.wells.v2"] = {
+        f"{I}{SI}{WELL}": CAT_TYPE,  # PK
+        f"{FI_}{PLATE}": CAT_TYPE,  # FK
+        "row": CAT_TYPE,
+        "col": CAT_TYPE,
+        "is_control_well": pl.Boolean,
+        "control_well_for_acquisition": pl.UInt16,
+        "plate.x.translate": pl.Float64,
+        "plate.y.translate": pl.Float64,
+        "plate.z.translate": pl.Float64,
     }
 
-    schema["resources.channels"] = {
+    schema["Resources.rois"] = {
+        f"{I}{SI}{ROI}": CAT_TYPE,  # PK
+        "well": CAT_TYPE,  # FK(wells)
+        "site": CAT_TYPE,  # FK(wells)
+        f"{ROI}.path": pl.String,
+        # "well": CAT_TYPE,
+        "translate.well.x": pl.Float64,
+        "translate.well.y": pl.Float64,
+        "translate.well.z": pl.Float64,
+    }
+
+    schema["Resources.rois.v2"] = {
+        f"{I}{SI}{ROI}": CAT_TYPE,  # PK
+        "domain.z.lower": pl.Float64,
+        "domain.z.upper": pl.Float64,
+        "domain.y.lower": pl.Float64,
+        "domain.y.upper": pl.Float64,
+        "domain.x.lower": pl.Float64,
+        "domain.x.upper": pl.Float64,
+        f"{FI_}well": CAT_TYPE,  # FK(wells)
+        # "well": CAT_TYPE,
+        "well.x.translate": pl.Float64,
+        "well.y.translate": pl.Float64,
+        "well.z.translate": pl.Float64,
+        "path": pl.String,
+    }
+
+    schema["_Resources.acquisition"] = {
+        f"{I}{SI}{ACQUIS}": pl.UInt8,  # PK
+        f"{ROI}.path": pl.String,
+    }
+
+    schema["_Resources.coordinate_systems"] = {
+        f"{I_}{ROOT}": CAT_TYPE,
+        f"{I_}{PLATE}": CAT_TYPE,
+        f"{I_}{WELL}": CAT_TYPE,
+        f"{I_}{ROI}{_LABEL_OBJ}": CAT_TYPE,
+        f"{I_}{OBJ}{_LABEL_OBJ}": CAT_TYPE,
+        f"{I_}{SI}{LABEL}{_LABEL_OBJ}": pl.UInt32,
+        f"{D_}{Z}.lower": pl.Float64,
+        f"{D_}{Z}.upper": pl.Float64,
+        f"{D_}{Y}.lower": pl.Float64,
+        f"{D_}{Y}.upper": pl.Float64,
+        f"{D_}{X}.lower": pl.Float64,
+        f"{D_}{X}.upper": pl.Float64,
+    }
+
+    {
+        "idx.root": pl.Categorical(ordering="lexical"),
+        "idx.plate": pl.Categorical(ordering="lexical"),
+        "idx.well": pl.Categorical(ordering="lexical"),
+        "idx.roi:label_object": CAT_TYPE,
+        "idx.o:label_object": CAT_TYPE,
+        "idx.lbl:label_object": CAT_TYPE,
+        "dim.z.lower": pl.Float64,
+        "dim.z.upper": pl.Float64,
+        "dim.y.lower": pl.Float64,
+        "dim.y.upper": pl.Float64,
+        "dim.x.lower": pl.Float64,
+        "dim.x.upper": pl.Float64,
+    }
+
+    schema["Resources.channels"] = {
         f"{I}{SI}{CH}": CAT_TYPE,  # PK
         "stain": CAT_TYPE,
         "acquisition": pl.UInt8,
@@ -110,44 +384,52 @@ def build_schema():
         ),  # CANNOT USE ARRAY HERE, breaks upon read/write!!!!
     }
 
-    schema["resources.object_types"] = {
+    schema["Resources.object_types"] = {
         f"{I}{SI}{OBJ}": CAT_TYPE,  # PK
         "hierarchy_level": pl.UInt8,
         "parents": pl.List(CAT_TYPE),
     }
 
-    schema["resources.multiscale_levels"] = {
+    schema["Resources.multiscale_levels"] = {
         f"{I}{SI}{MS}": pl.UInt8,  # PK
         "scale.z": pl.Float64,
         "scale.y": pl.Float64,
         "scale.x": pl.Float64,
     }
 
-    schema["resources.images"] = {
+    schema["Resources.images"] = {
         f"{I}{SI}{MS}": pl.UInt8,
-        f"{I}{SI}{ROI}": CAT_TYPE,
         f"{I}{SI}{CH}": CAT_TYPE,
+        f"{I}{SI}{ROI}": CAT_TYPE,
         # "t": pl.Datetime | pl.UInt32,
-        f"{CH}.path": CAT_TYPE,
+        f"{ROI}.path": CAT_TYPE,
         # PK (m, roi, c, [t])
         # FK (m -> ms.m), (roi -> rois.roi), (c -> cs.c) ...
     }
 
-    schema["resources.xy_model_corrs"] = {
+    schema["_Resources.xy_model_corrs"] = {
         f"{I}{SI}wavelength": pl.UInt16,
-        "path.xy_model_corr": CAT_TYPE,
+        "path": CAT_TYPE,
+    }
+
+    schema["_Params.decay_model"] = {
+        "idx.model": CAT_TYPE,
+        "type": pl.Enum(["xy", "z", "t"]),
+        "ndim": pl.Enum(["1D", "2D", "3D"]),
+        "loss": pl.Enum(["linear", "huber"]),
+        "features.intensity": pl.Enum(["Mean", "Median", "Sum"]),
+        "coords.names": pl.List(pl.String),
+        "Resources.dft": pl.List(pl.String),
+        # 2D  and 3D only
+        "fidx.o": CAT_TYPE,
+        "fidx.labels": pl.List(pl.UInt32),  # len == 0 -> 1D ...
     }
 
     # TODO: remove 'z_model.' for metadata columns?
-    schema["resources.z_models"] = {
+    schema["Resources.z_models"] = {
         f"{I}{SI}{CH}": CAT_TYPE,
-        f"{I}{SI}z_model": CAT_TYPE,
-        "z_model.full_name": CAT_TYPE,
-        "z_model.type": CAT_TYPE,
-        f"z_model.{OBJ}": CAT_TYPE,
-        "z_model.dtf": CAT_TYPE,
-        "z_model.ndim": pl.UInt8,
-        "z_model.path": pl.String,
+        f"{I}{SI}model": CAT_TYPE,
+        "path": pl.String,
         # "z_model.params": pl.Struct(
         #     {
         #         "features": pl.List(pl.String),
@@ -157,25 +439,23 @@ def build_schema():
         # ),
     }
 
-    schema["resources.t_models"] = {
+    schema["Resources.t_models"] = {
         f"{I}{SI}{CH}": CAT_TYPE,
         f"{I}{SI}{ROI}": CAT_TYPE,
-        f"{I}{SI}t_model": CAT_TYPE,
-        "t_model.type": CAT_TYPE,
-        "t_model.correction_factor": pl.Float64,
-        "delta_t_min": pl.Float64,
-    }
-
-    schema["resources.t_model_corrs"] = {
-        f"{I}{SI}{CH}": CAT_TYPE,
-        f"{I}{SI}{ROI}": CAT_TYPE,
-        f"{I}{SI}t_model": CAT_TYPE,
-        "t_model.type": CAT_TYPE,
+        f"{I}{SI}model": CAT_TYPE,
         "correction_factor": pl.Float64,
         "delta_t_min": pl.Float64,
     }
 
-    schema["resources.label_images"] = {
+    schema["Resources.t_model_corrs"] = {
+        f"{I}{SI}{CH}": CAT_TYPE,
+        f"{I}{SI}{ROI}": CAT_TYPE,
+        f"{I}{SI}model": CAT_TYPE,
+        "correction_factor": pl.Float64,
+        "delta_t_min": pl.Float64,
+    }
+
+    schema["Resources.label_images"] = {
         f"{I}{SI}{MS}": pl.UInt8,
         f"{I}{SI}{OBJ}": CAT_TYPE,
         f"{I}{SI}{ROI}": CAT_TYPE,
@@ -186,7 +466,7 @@ def build_schema():
         # FK as one would expect
     }
 
-    schema["resources.label_objects"] = {
+    schema["Resources.label_objects"] = {
         f"{I}{SI}{MS}": pl.UInt8,
         f"{I}{SI}{OBJ}": CAT_TYPE,
         f"{I}{SI}{ROI}": CAT_TYPE,
@@ -203,7 +483,29 @@ def build_schema():
         # UNIQUE (o, roi, label) -> more explicit, better PK?
     }
 
-    schema["resources.hierarchy"] = {
+    schema["Resources.label_objects.v2"] = {
+        "idx.roi": CAT_TYPE,
+        "idx.o": CAT_TYPE,
+        "idx.roi.o.lbl": pl.UInt32,
+        "lbl_centroid.z": pl.Float64,
+        "lbl_centroid.y": pl.Float64,
+        "lbl_centroid.x": pl.Float64,
+        "domain.z.lower": pl.Float64,
+        "domain.z.upper": pl.Float64,
+        "domain.y.lower": pl.Float64,
+        "domain.y.upper": pl.Float64,
+        "domain.x.lower": pl.Float64,
+        "domain.x.upper": pl.UInt8,
+        "idx.m": pl.UInt8,
+        "slice.m.iz.lower": pl.Int32,
+        "slice.m.iz.upper": pl.Int32,
+        "slice.m.iy.lower": pl.Int32,
+        "slice.m.iy.upper": pl.Int32,
+        "slice.m.ix.lower": pl.Int32,
+        "slice.m.ix.upper": pl.Int32,
+    }
+
+    schema["Resources.hierarchy"] = {
         # child and parent share roi
         f"{I}{SI}{ROI}": CAT_TYPE,
         f"{I}{SI}{OBJ}{SI}{PARENT}": CAT_TYPE,
@@ -212,7 +514,7 @@ def build_schema():
         f"{I}{SI}{LABEL}{SI}{CHILD}": pl.UInt32,
     }
 
-    schema["resources.classifiers"] = {
+    schema["Resources.classifiers"] = {
         f"{I}{SI}clf_name": CAT_TYPE,
         f"{I}{SI}{OBJ}": CAT_TYPE,
         "classes": pl.List(CAT_TYPE),
@@ -226,11 +528,16 @@ def build_schema():
         ),
     }
 
-    schema["features.label"] = {
+    schema["_Resources.neighborhood.types"] = {
+        f"{I_}{NHD}": pl.String,
+    }
+
+    schema["Features.label"] = {
         # "id": pl.UInt32,
         f"{I}{SI}{OBJ}": CAT_TYPE,
         f"{I}{SI}{ROI}": CAT_TYPE,
         f"{I}{SI}{LABEL}": pl.UInt32,
+        # Shape
         "PhysicalSize": pl.Float64,
         "Elongation": pl.Float64,
         "Flatness": pl.Float64,
@@ -241,6 +548,7 @@ def build_schema():
         "EquivalentSphericalRadius": pl.Float64,
         "PerimeterOnBorder": pl.Float64,
         "PerimeterOnBorderRatio": pl.Float64,
+        # Orientation
         "EquivalentEllipsoidDiameter-a": pl.Float64,
         "EquivalentEllipsoidDiameter-b": pl.Float64,
         "EquivalentEllipsoidDiameter-c": pl.Float64,
@@ -291,12 +599,13 @@ def build_schema():
         # FK (id -> label_objects.id), ...
     }
 
-    schema["features.intensity"] = {
+    schema["Features.intensity"] = {
         # "id": pl.UInt32,
         f"{I}{SI}{OBJ}": CAT_TYPE,
         f"{I}{SI}{CH}": CAT_TYPE,
         f"{I}{SI}{ROI}": CAT_TYPE,
         f"{I}{SI}{LABEL}": pl.UInt32,
+        # Scalar
         "Mean": pl.Float64,
         "Median": pl.Float64,
         "Minimum": pl.Float64,
@@ -308,9 +617,11 @@ def build_schema():
         "Kurtosis": pl.Float64,
         "WeightedElongation": pl.Float64,
         "WeightedFlatness": pl.Float64,
+        # Position
         "CenterOfGravity-x": pl.Float64,
         "CenterOfGravity-y": pl.Float64,
         "CenterOfGravity-z": pl.Float64,
+        # Orientation
         "WeightedPrincipalAxes-a-x": pl.Float64,
         "WeightedPrincipalAxes-a-y": pl.Float64,
         "WeightedPrincipalAxes-a-z": pl.Float64,
@@ -334,7 +645,7 @@ def build_schema():
         # FK (id -> label_objects.id), (c -> cs.c), ...
     }
 
-    schema["features.correlation"] = {
+    schema["Features.correlation"] = {
         f"{I}{SI}{OBJ}": CAT_TYPE,
         f"{I}{SI}{ROI}": CAT_TYPE,
         f"{I}{SI}{LABEL}": pl.UInt32,
@@ -345,7 +656,7 @@ def build_schema():
         "KendallTau": pl.Float64,
     }
 
-    schema["features.distance"] = {
+    schema["Features.distance"] = {
         f"{I}{SI}{OBJ}": CAT_TYPE,
         f"{I}{SI}{ROI}": CAT_TYPE,
         f"{I}{SI}{LABEL}": pl.UInt32,
@@ -363,7 +674,7 @@ def build_schema():
         "MinimumIndex-x": pl.Int32,
     }
 
-    schema["features.density_count"] = {
+    schema["Features.density_count"] = {
         f"{I}{SI}{OBJ}": CAT_TYPE,
         f"{I}{SI}{ROI}": CAT_TYPE,
         f"{I}{SI}{LABEL}": pl.UInt32,
@@ -371,7 +682,7 @@ def build_schema():
         "Count": pl.UInt32,
     }
 
-    schema["features.density_distance"] = {
+    schema["Features.density_distance"] = {
         f"{I}{SI}{OBJ}": CAT_TYPE,
         f"{I}{SI}{ROI}": CAT_TYPE,
         f"{I}{SI}{LABEL}": pl.UInt32,
@@ -380,7 +691,7 @@ def build_schema():
         "Mean": pl.Float64,
     }
 
-    schema["features.classifier"] = {
+    schema["Features.classifier"] = {
         f"{I}{SI}{OBJ}": CAT_TYPE,
         f"{I}{SI}{ROI}": CAT_TYPE,
         f"{I}{SI}{LABEL}": pl.UInt32,
@@ -389,9 +700,23 @@ def build_schema():
         "pred": CAT_TYPE,
         "probas": pl.List(pl.Struct({"annotation": CAT_TYPE, "proba": pl.Float64})),
     }
+
+    schema["_Features.ccp"] = {
+        f"{I}{SI}{OBJ}": CAT_TYPE,
+        f"{I}{SI}{ROI}": CAT_TYPE,
+        f"{I}{SI}{LABEL}": pl.UInt32,
+        f"{I}{SI}run_id": pl.String,
+        f"{I}{SI}id": pl.Int32,
+        "CCP": pl.Float64,
+        "NormalizedCCP": pl.Float64,
+    }
+    if not include_hidden:
+        return {k: v for k, v in schema.items() if not k.startswith("_")}
     return schema
 
 
-EMPTY_TABLES = build_lazy_tables(build_schema())
-
-# %%
+SCHEMA_HIDDEN = build_schema()
+SCHEMA = build_schema(include_hidden=False)
+LAZY_TABLES_EMPTY_HIDDEN = build_lazy_tables(SCHEMA_HIDDEN)
+LAZY_TABLES_EMPTY = build_lazy_tables(SCHEMA)
+LAZY_SCHEMA_EMPTY = LAZY_TABLES_EMPTY

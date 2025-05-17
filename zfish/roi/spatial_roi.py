@@ -24,6 +24,8 @@ import h5py
 import numpy as np
 import polars as pl
 import xarray as xr
+
+# from deltalake import write_deltalake
 from tqdm import tqdm
 
 from zfish.features.types import LabelImage, SpatialImage
@@ -74,6 +76,7 @@ OBJECT_INDEX = ("label",)
 #     attrs_select = {**attrs_select, **{"level": level}}
 #     return xr.concat(_load_roi(root_path=root_path, attrs_select=attrs_select), dim="c")
 
+
 def _load_roi(
     f: h5py.File,
     attrs_select: dict[str, str | int | tuple[str | int, ...]],
@@ -99,7 +102,7 @@ def load_labels(f: h5py.File, level: int | None = None) -> LabelImage:
     dsets = _load_roi(f=f, attrs_select=attrs_select)
     if len(dsets) == 0:
         return xr.DataArray()
-    return xr.concat(dsets, dim="c").rename({'c': 'l'})
+    return xr.concat(dsets, dim="c").rename({"c": "l"})
 
 
 def load_roi_tables(
@@ -127,31 +130,38 @@ def load_roi_table(root_path: PathLike, id_column="object") -> "pl.DataFrame":
             table.with_columns(pl.lit(object_name).alias(id_column))
             for object_name, table in tables.items()
         ],
-        how='diagonal'
+        how="diagonal",
     )
+
 
 # def load_roi_map_tables(root_path: PathLike, id_column="object") -> "pl.DataFrame":
 #     import polars as pl
-    
+
 #     tables = defaultdict(list)
-    
+
 #     for roi_root in Path(root_path).rglob('*.parquet'):
 #         if roi_root.is_file():
 #             object_ = roi_root.stem
 #             tables[object_].append(pl.read_parquet(roi_root))
-    
+
 #     return {k: pl.concat(v, how='diagonal') for k, v in tables.items()}
+
 
 def load_roi_map_table(root_path: PathLike, id_column="roi") -> "pl.DataFrame":
     import polars as pl
 
     tables = []
 
-    for roi_root in Path(root_path).glob('*'):
+    for roi_root in Path(root_path).glob("*"):
         if roi_root.is_dir():
-            tables.append(load_roi_table(roi_root).with_columns(pl.lit(roi_root.name).alias(id_column)))
-    
-    return pl.concat(tables, how='diagonal')
+            tables.append(
+                load_roi_table(roi_root).with_columns(
+                    pl.lit(roi_root.name).alias(id_column)
+                )
+            )
+
+    return pl.concat(tables, how="diagonal")
+
 
 # def load_ill_corr_models(root_path: PathLike) -> dict[str, dict[str, dict[str, "Model"]]]:
 #     """
@@ -212,8 +222,12 @@ def write_models(models, root: Path | str, write_params_json: bool = True):
         if isinstance(value, dict):
             write_models(value, current_path)
         elif isinstance(value, Model):
-            value.save(directory=current_path, file_name="model", mode="wb", write_params_json=write_params_json)
-            
+            value.save(
+                directory=current_path,
+                file_name="model",
+                mode="wb",
+                write_params_json=write_params_json,
+            )
 
 
 def read_models(root: Path | str | None):
@@ -312,7 +326,6 @@ def empty_data():
     }
 
 
-# TODO: Maybe use a StrEnum (available from 3.11)
 class TableWriteStrategy(Enum):
     OVERWRITE = auto()
     MERGE = auto()
@@ -353,14 +366,14 @@ class Roi(abc.Mapping):
     _TWO_STEP_ILL_CORR_LABEL: str | None = "embryoRaw"
 
     def __init__(
-            self,
-            _fp: ProxyType | None = None,
-            data: Mapping[str, Any] | None = None,
-            tables: Mapping[str, Any] | None = None,
-            models: Mapping[str, Mapping[str, Mapping[str, Model]]] | None = None,
-            paths: Mapping[str, Path] | None = None,
-            name: str = ""
-            ):
+        self,
+        _fp: ProxyType | None = None,
+        data: Mapping[str, Any] | None = None,
+        tables: Mapping[str, Any] | None = None,
+        models: Mapping[str, Mapping[str, Mapping[str, Model]]] | None = None,
+        paths: Mapping[str, Path] | None = None,
+        name: str = "",
+    ):
         self._fp = _fp
         if data is None:
             self.data = empty_data()
@@ -379,7 +392,6 @@ class Roi(abc.Mapping):
         else:
             self.paths = paths
         self.name = name
-        
 
     @classmethod
     def from_file(
@@ -410,7 +422,6 @@ class Roi(abc.Mapping):
         labels = load_labels(_fp, level=level)
         channels = load_channels(_fp, level=level)
 
-
         return Roi(
             _fp=_fp,
             data={
@@ -422,11 +433,9 @@ class Roi(abc.Mapping):
             paths=paths,
             name=name,
         )
-    
+
     @classmethod
-    def close_all_files(
-        cls
-    ):
+    def close_all_files(cls):
         for f in cls._f:
             f.close()
         cls._f.clear()
@@ -493,15 +502,17 @@ class Roi(abc.Mapping):
         """
         print(kwargs)
         if len(kwargs.keys()) > 1:
-            raise ValueError(f"Can only take one element type at the time: {kwargs.keys()}")
+            raise ValueError(
+                f"Can only take one element type at the time: {kwargs.keys()}"
+            )
         dim, coords = list(kwargs.items())[0]
-        if dim=='l':
+        if dim == "l":
             return self.labels.sel(**kwargs)
-        elif dim == 'c':
+        elif dim == "c":
             return self.images.sel(**kwargs)
-        elif dim == 'tables':
+        elif dim == "tables":
             return self.tables[coords]
-        elif dim == 'feature':
+        elif dim == "feature":
             return self.table().select(pl.col(coords))
 
     def sel(self, **kwargs) -> "Roi":
@@ -550,7 +561,7 @@ class Roi(abc.Mapping):
         assert dim in ["l", "c"]
         if dim == "l":
             return Roi(
-            _fp=self._fp,
+                _fp=self._fp,
                 data={
                     self._LABELS_KEY: empty_data()[self._LABELS_KEY],
                     self._IMAGES_KEY: self[self._IMAGES_KEY],
@@ -562,7 +573,7 @@ class Roi(abc.Mapping):
             )
         else:
             return Roi(
-            _fp=self._fp,
+                _fp=self._fp,
                 data={
                     self._LABELS_KEY: self[self._LABELS_KEY],
                     self._IMAGES_KEY: empty_data()[self._IMAGES_KEY],
@@ -785,19 +796,21 @@ class ResourceQuery:
     label_images: tuple[str, ...] = field(default_factory=tuple)
     channels: tuple[str, ...] = field(default_factory=tuple)
 
+
 def load_resource(query: ResourceQuery, roi: Roi) -> dict[str, Element]:
     result = {}
     for l in query.label_images:
-        result[l] = roi.sel(l=l).drop_dim('c').labels.compute()
+        result[l] = roi.sel(l=l).drop_dim("c").labels.compute()
     for c in query.channels:
-        result[c] = roi.sel(c=c).drop_dim('l').images.compute()
+        result[c] = roi.sel(c=c).drop_dim("l").images.compute()
+
 
 def apply_z_decay_models_to_roi(
     models: Mapping[str, Model | None] | None,
     roi: Roi,
     two_step_label: str | None = None,
     suffix: str = "",
-    correction_factor_clip_range: tuple[float, float] | None = (0.0, 50.0)
+    correction_factor_clip_range: tuple[float, float] | None = (0.0, 50.0),
 ) -> Roi:
     if models is None:
         return roi
@@ -864,16 +877,18 @@ def apply_t_decay_factors(
     out_channels = []
     for channel in roi.images:
         channel_name = channel.c.item()
-        if not channel_name in df_roi['channel']:
-            print(f'No t-correction for `{channel_name}`')
+        if not channel_name in df_roi["channel"]:
+            print(f"No t-correction for `{channel_name}`")
             out_channels.append(channel)
         else:
-            correction_factor = df_roi.filter(pl.col('channel')==channel_name)[correction_column].item()
+            correction_factor = df_roi.filter(pl.col("channel") == channel_name)[
+                correction_column
+            ].item()
             out_channel = channel * correction_factor
             if maintain_image_dtype:
                 out_channel = out_channel.astype(channel.dtype)
             out_channels.append(out_channel)
-    data[roi._IMAGES_KEY] = xr.concat(out_channels, dim='c')
+    data[roi._IMAGES_KEY] = xr.concat(out_channels, dim="c")
 
     return Roi(
         _fp=roi._fp,
@@ -883,6 +898,7 @@ def apply_t_decay_factors(
         name=roi.name,
         paths=roi.paths,
     )
+
 
 @dataclass(frozen=True, slots=True)
 class SpatialDimMeta:
@@ -982,15 +998,15 @@ class RoiMap(abc.Mapping):
         rois = {}
         if len(fns) == 0:
             raise ValueError("Empty list provided.")
-        
+
         for fn in tqdm(fns):
             fn = Path(fn)
             roi = Roi.from_file(
                 fn,
                 level=level,
-                features_root=None
-                if features_root is None
-                else Path(features_root) / fn.stem,
+                features_root=(
+                    None if features_root is None else Path(features_root) / fn.stem
+                ),
             )
             rois[fn.stem] = roi
 

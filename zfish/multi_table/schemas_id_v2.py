@@ -1,8 +1,8 @@
 # %%
 import re
-from dataclasses import dataclass, make_dataclass
+from dataclasses import dataclass
 from itertools import chain, zip_longest
-from typing import ClassVar, Literal, NewType
+from typing import ClassVar, Literal, NewType, Self
 
 from zfish.commons.types_ import MISSING
 
@@ -93,20 +93,17 @@ class IdParser:
         return mo.groupdict()
 
     @classmethod
-    def from_filename(cls, qname: str):
+    def from_filename(cls, qname: str) -> Self:
         group_dict = cls.extract_mo_group_dict(qname)
         return cls(**group_dict)
 
     @classmethod
-    def separator(cls):
+    def separator(cls) -> str:
         return cls.__QNAME_SEP__
 
     @classmethod
     def regex(cls) -> re.Pattern:
         return cls.__QNAME_REGEX__
-
-
-from dataclasses import field
 
 
 @dataclass(frozen=True, slots=True)

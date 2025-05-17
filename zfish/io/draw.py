@@ -24,6 +24,20 @@ def rot(v1, v2):
     )
 
 
+def rot_safe(v1, v2, epsilon=1e-5):
+    phi = angle_between(v1, v2)
+
+    if phi < epsilon:
+        return R.identity()
+    if np.abs(phi - np.pi) < epsilon:
+        return R.from_rotvec(np.array([np.pi, 0, 0]))
+    axes = unit_vector(np.cross(v1, v2))
+    x, y, z = axes
+    return R.from_quat(
+        [x * np.sin(phi / 2), y * np.sin(phi / 2), z * np.sin(phi / 2), np.cos(phi / 2)]
+    )
+
+
 def random_vector(dims: int = 3, seed=None):
     rng = np.random.default_rng(seed=seed)
     x = rng.standard_normal(dims)
@@ -98,8 +112,6 @@ def field_of_ellipsoids(
                     x : x + side_length_single,
                     y : y + side_length_single,
                     z : z + side_length_single,
-                ] = (
-                    ellipsoid * i
-                )
+                ] = ellipsoid * i
                 i += 1
     return canvas

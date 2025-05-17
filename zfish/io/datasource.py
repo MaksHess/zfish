@@ -484,7 +484,9 @@ def get_image_si(
         c_coords = [f"ch{i}" for i in range(c_shape)]
     elif "c" in dims:
         c_shape = shape[dims.index("c")]
-        assert  c_shape == len(c_coords), f"shape dim c ({c_shape}) not equal len(c_coords): ({len(c_coords)})"
+        assert c_shape == len(
+            c_coords
+        ), f"shape dim c ({c_shape}) not equal len(c_coords): ({len(c_coords)})"
     spatial_dims = tuple(e for e in dims if e in SPATIAL_DIMS)
     ndims_spatial = len(spatial_dims)
     if scale is None:

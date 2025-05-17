@@ -1,6 +1,8 @@
 import polars as pl
 import polars.selectors as cs
 
+from zfish.features.polars_utils import nest
+
 pl.enable_string_cache()
 
 
@@ -17,7 +19,7 @@ def unnest_struct(df, struct_column="idx", sep=""):
 def unnest_structs(df, column_selector=cs.all(), sep=""):
     columns = cs.expand_selector(df, column_selector)
     for column in columns:
-        df.schema[column]
+        df.collect_schema()[column]
         if isinstance(df.schema[column], pl.Struct):
             df = df.pipe(unnest_struct, struct_column=column, sep=sep)
     return df
@@ -36,7 +38,7 @@ def dtype_depth(dtype):
 
 
 def unnest(df, to_level=-1, sep="", column_selector=cs.all()):
-    max_depth = max(map(dtype_depth, df.dtypes))
+    max_depth = max(map(dtype_depth, df.collect_schema().dtypes()))
     if to_level < 0:
         to_level = max_depth + to_level + 1
     for _ in range(to_level):

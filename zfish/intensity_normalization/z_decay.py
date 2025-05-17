@@ -251,9 +251,11 @@ for j, (model, model_color) in enumerate(zip(models, model_colors)):
     for i, channel in enumerate(channels):
         print(channel)
 
-        df_channel = df_merge_clean.filter(pl.col("channel") == channel).with_columns(
-            pl.col("Mean").name.prefix(f"{channel}_")
-        ).to_pandas()
+        df_channel = (
+            df_merge_clean.filter(pl.col("channel") == channel)
+            .with_columns(pl.col("Mean").name.prefix(f"{channel}_"))
+            .to_pandas()
+        )
 
         y_column = f"{channel}_Mean"
 
@@ -376,10 +378,24 @@ fld_plots.mkdir(exist_ok=True, parents=True)
 
 write_models(more_models, root=fld_models)
 
-figs[0].savefig(fld_plots / 'overview__one_step.svg')
-figs[1].savefig(fld_plots / 'overview__two_step.svg')
+figs[0].savefig(fld_plots / "overview__one_step.svg")
+figs[1].savefig(fld_plots / "overview__two_step.svg")
 # %%
 
+sns.scatterplot(
+    r.t_models.filter(pl.col("c") == "DAPI.1").join(
+        f.intensity.filter(pl.col("c") == "DAPI.1")
+        .group_by("roi")
+        .agg(pl.col("Mean").mean(), pl.col("o", "label", "c").first())
+        .select(pl.col(["roi", "o", "label", "c", "Mean"]))
+        .with_columns(pl.col("Mean")),
+        on=["c", "roi"],
+        how="left",
+    ).with_columns(pl.col('Mean')/pl.col('correction_factor')),
+    x="delta_t_min",
+    y="Mean",
+)
+# %%
 import holoviews as hv
 
 from zfish.intensity_normalization.plots import data_range, plot_model_, plot_models
@@ -408,7 +424,7 @@ for channel in channels:
     df_channel = df_merge_clean.filter(pl.col("channel") == channel)
     models = {}
     for model_name in NEW_NAMES:
-        dd = more_models['z_decay'][model_name]
+        dd = more_models["z_decay"][model_name]
         if channel in dd:
             models[NEW_NAMES[model_name]] = dd[channel]
     figure = (
@@ -430,15 +446,30 @@ import plotly.io as pio
 df_plot
 
 
-
-fig = go.Figure(data=[go.Scatter3d(x=df_plot['MediumPath'], y=df_plot['EmbryoPath'], z=df_plot['Mean'], mode='markers', marker=dict(size=2, opacity=0.5, color='rgb(150, 150, 150)'))])
+fig = go.Figure(
+    data=[
+        go.Scatter3d(
+            x=df_plot["MediumPath"],
+            y=df_plot["EmbryoPath"],
+            z=df_plot["Mean"],
+            mode="markers",
+            marker=dict(size=2, opacity=0.5, color="rgb(150, 150, 150)"),
+        )
+    ]
+)
 fig = go.Figure()
-fig.update_layout(template='simple_white+gridon')
+fig.update_layout(template="simple_white+gridon")
 # fig.update_xaxes(minor=dict(showgrid=True), overwrite=True)
 # fig.update_yaxes(minor=dict(showgrid=True), overwrite=True)
 # fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), scene=dict(zaxis=dict(range=[0, 200])))
-fig.update_layout(xaxis=dict(ticks='inside'), yaxis=dict(ticks='inside'))
-fig.update_layout(scene=dict(xaxis=dict(ticks='inside'), yaxis=dict(ticks='inside'), zaxis=dict(ticks='inside')))
+fig.update_layout(xaxis=dict(ticks="inside"), yaxis=dict(ticks="inside"))
+fig.update_layout(
+    scene=dict(
+        xaxis=dict(ticks="inside"),
+        yaxis=dict(ticks="inside"),
+        zaxis=dict(ticks="inside"),
+    )
+)
 fig.show()
 
 

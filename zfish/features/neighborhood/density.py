@@ -66,7 +66,7 @@ def get_density_features(
             )
         )
 
-    # Compute distances to closest neighbors
+    # Compute distances to closest knn neighbors
     results.append(
         nq.knn(knn_distance, self_loops=False, distance=True).aggregate_weights(
             distance_aggfuncs

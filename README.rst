@@ -2,6 +2,14 @@
 zfish
 =====
 
+### scripts_shayani
+## Feature tables
+two folders under
+/data/active/hmax/shayani
+
+- aggregated tables
+- old tables, hopefully matching the scripts in the folder
+
 
 .. image:: https://img.shields.io/pypi/v/zfish.svg
         :target: https://pypi.python.org/pypi/zfish

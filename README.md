@@ -27,6 +27,7 @@ Based on _ccp_gradients.py
 
 ### ccp_train.py
 Train a single CCP model.
+-> additional dependency: [scikit-ccp](https://github.com/MaksHess/scikit-ccp)
 
 ### write_parquet_tables.py
 Aggregated parquet tables (/data/active/hmax/shayani/features/aggregated) from tall tables.

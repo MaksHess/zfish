@@ -1,0 +1,67 @@
+figure.dpi: 300
+font.family: bahnschrift
+
+axes.unicode_minus: False
+
+figure.constrained_layout.use: True
+figure.constrained_layout.h_pad: 0.08 # in
+figure.constrained_layout.w_pad: 0.08 # in
+figure.constrained_layout.hspace: 0.02 # in
+figure.constrained_layout.wspace: 0.02 # in
+axes.titlepad: 2.5 # pts
+axes.labelpad: 0.5 # pts
+xtick.major.pad: 1.5 # pts
+ytick.major.pad: 1.5 # pts
+
+
+figure.facecolor: white
+figure.edgecolor: white
+figure.frameon: False
+
+axes.facecolor: white
+axes.edgecolor: 0.2
+xtick.color: 0.2
+ytick.color: 0.2
+
+axes.grid: True
+grid.color: 0.5
+grid.linestyle: :
+grid.alpha: 1.0
+
+
+axes.linewidth: 0.5
+xtick.major.width: 0.5
+ytick.major.width: 0.5
+grid.linewidth: 0.3
+xtick.minor.width: 0.3
+ytick.minor.width: 0.3
+
+xtick.major.size: 2.5
+xtick.minor.size: 1.5
+ytick.major.size: 2.5
+ytick.minor.size: 1.5
+
+xtick.direction: in
+ytick.direction: in
+
+# Seaborn deep palette
+axes.prop_cycle: cycler('color', ['4C72B0', '55A868', 'C44E52', '8172B2', 'CCB974', '64B5CD'])
+patch.facecolor: 4C72B0
+
+
+# Seaborn paper context
+figure.figsize: 1.8, 1.6
+axes.labelsize: 5
+axes.titlesize: 6
+xtick.labelsize: 5
+ytick.labelsize: 5
+legend.fontsize: 5
+legend.title_fontsize: 5
+lines.markersize: 3
+lines.linewidth: 1
+
+legend.framealpha: 0.9
+legend.edgecolor: 0.7
+legend.handleheight: 1.0
+legend.handlelength: 1.0
+legend.handletextpad: 0.4

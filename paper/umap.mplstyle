@@ -1,0 +1,13 @@
+xtick.top: False
+xtick.bottom: False
+xtick.labeltop: False
+xtick.labelbottom: False
+ytick.left: False
+ytick.right: False
+ytick.labelleft: False
+ytick.labelright: False
+
+xtick.minor.visible: False
+ytick.minor.visible: False
+axes.grid: False
+image.aspect: equal

@@ -34,7 +34,7 @@ from zfish.features.polars_utils import (
 # %% Load features & annotations
 classifier_name = "cellcycle2c"
 target = "ann4"  # ann0/1: 6 classes,  ann2: 4 classes, ann3: 3 classes, ann4: 2 classes
-label_order = ['M', 'S']
+label_order = ["M", "S"]
 
 # classifier_name = "cellcycle3c"
 # target = "ann3"  # ann0/1: 6 classes,  ann2: 4 classes, ann3: 3 classes, ann4: 2 classes
@@ -49,7 +49,7 @@ label_order = ['M', 'S']
 # label_order = ["M pro", "M meta", "M ana", "M telo", "S early", "S"]
 
 
-features = sel.label | sel.intensity | sel.density | sel.correlation| sel.distance
+features = sel.label | sel.intensity | sel.density | sel.correlation | sel.distance
 
 run_grid_search = True
 
@@ -109,7 +109,10 @@ if run_grid_search:
 
     grid_search.fit(X_train, y_train.to_pandas())
 
-    fig_grid_search = plot_grid_search(grid_search, output_file = out_fn_clf.parent / f"{classifier_name}_plot_GridSearch.html")
+    fig_grid_search = plot_grid_search(
+        grid_search,
+        output_file=out_fn_clf.parent / f"{classifier_name}_plot_GridSearch.html",
+    )
 fig_grid_search
 # %% Select the best estimator, compute scoring metrics, plot feature importance
 if run_grid_search:
@@ -136,7 +139,11 @@ roc_display = plot_roc_curve(
 )
 
 
-plot_feature_importance(clf, n_features=30, output_file=out_fn_clf.parent / f"{classifier_name}_plot_FeatureImportance.html")
+plot_feature_importance(
+    clf,
+    n_features=30,
+    output_file=out_fn_clf.parent / f"{classifier_name}_plot_FeatureImportance.html",
+)
 
 # %% Apply the classifier on all objects
 celltype_proba = clf.predict_proba(df_nuc_raw)
@@ -147,7 +154,9 @@ save_pipeline(clf, out_fn_clf)
 
 df_pred = (
     df_nuc_raw.select(["roi", "object", "label"])
-    .with_columns(pl.Series(f"{classifier_name}_pred", celltype_pred, dtype=pl.Enum(label_order)))
+    .with_columns(
+        pl.Series(f"{classifier_name}_pred", celltype_pred, dtype=pl.Enum(label_order))
+    )
     .with_columns(
         pl.DataFrame(celltype_proba, schema=list(clf.classes_)).select(
             pl.all().name.suffix("_proba")

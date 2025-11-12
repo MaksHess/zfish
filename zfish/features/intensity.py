@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from zfish.roi.spatial_roi import Roi
 
 
-
 IntensityFeaturesLike: TypeAlias = tuple[IntensityFeature, ...] | tuple[str, ...]
 
 
